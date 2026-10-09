@@ -6,7 +6,7 @@
 | --- | --- |
 | Product | File Browser |
 | Document | Product requirements and interaction specification |
-| Document version | 0.2.2 |
+| Document version | 0.3.0 |
 | Product release baseline | 0.1.0 |
 | Status | Draft — implementation and platform validation in review |
 | Target release | Windows v1; Linux Ubuntu/openSUSE milestone follows |
@@ -18,6 +18,7 @@
 
 | Version | Date | Author | Change |
 | --- | --- | --- | --- |
+| 0.3.0 | 2026-10-10 | AI PM Agent | Add text and image previews, in-memory content indexing, UTF-8 editing, ZIP browsing, and editable file properties for GUI/TUI. |
 | 0.2.2 | 2026-10-10 | AI PM Agent | Split combined functional groups into 12 feature specifications with independent workflows and UI state matrices. |
 | 0.2.1 | 2026-10-10 | AI PM Agent | Tightened measurable goals, motion/timeout behavior, technical targets, persona literacy, and release KPIs after PRD audit. |
 | 0.2.0 | 2026-10-10 | AI PM Agent | Reorganized as a complete PRD; added feature journeys, UI state matrices, non-functional targets, telemetry policy, and open questions. |
@@ -35,7 +36,7 @@ Desktop users need a predictable way to browse, find, and move local files, whil
 
 ### Goals (in scope)
 
-- Provide all 12 feature modules in section 4 in the interface(s) appropriate to the capability; each module has at least one Given/When/Then acceptance scenario.
+- Provide all 17 feature modules in section 4 in the interface(s) appropriate to the capability; each module has at least one Given/When/Then acceptance scenario.
 - Keep filesystem work off interactive event loops; block user-input handling for no more than 100 ms during supported operations.
 - Reach at least 95% successful workflow completion across the Windows release acceptance matrix, with 100% correct mode-selection and terminal-restoration cases.
 - Start at Home and choose the GUI for 100% of graphical-session cases; otherwise choose the TUI for 100% of interactive-terminal cases.
@@ -45,7 +46,11 @@ Desktop users need a predictable way to browse, find, and move local files, whil
 
 ### Non-goals (out of scope)
 
-- File-content preview, indexing, editing, archive browsing, or property editing.
+- PDF, media, and document-format previews; the built-in preview covers UTF-8 text and selected raster image formats.
+- Persistent or cross-session content indexes; indexing is explicit, scoped to one folder tree, and held in memory.
+- Editing non-UTF-8, oversized, symlink, or non-regular files; editing text is limited to UTF-8 files up to 1 MiB.
+- Archive formats other than ZIP, archive editing, and archive extraction from the archive browser.
+- Property editing beyond the read-only flag and modified time.
 - Accounts, cloud storage, synchronization, remote administration, or production analytics telemetry.
 - Undo/redo, operation cancellation, persistent tabs, per-folder view settings, or user-defined Locations outside Favorites.
 - Touch-first layouts, a built-in terminal, or a web interface.
@@ -76,7 +81,7 @@ Desktop users need a predictable way to browse, find, and move local files, whil
 
 ## 4. Functional Specifications
 
-The 12 feature modules below define user stories, end-to-end flows, Gherkin acceptance criteria, and observable UI states. Every matrix covers default, empty, loading/progress, validation error, external dependency failure, and timeout behavior. File Browser has no application server; server failure is not applicable. Network-mounted volumes and OS integrations use the external-failure state. The desktop GUI uses a spinner for pending work and has no view-transition animation; the TUI uses status text only. The detailed interaction rules, complete shortcut maps, and FR-01–FR-42 acceptance catalog are in Appendix A.
+The 17 feature modules below define user stories, end-to-end flows, Gherkin acceptance criteria, and observable UI states. Every matrix covers default, empty, loading/progress, validation error, external dependency failure, and timeout behavior. File Browser has no application server; server failure is not applicable. Network-mounted volumes and OS integrations use the external-failure state. The desktop GUI uses a spinner for pending work and has no view-transition animation; the TUI uses status text only. The detailed interaction rules, complete shortcut maps, and FR-01–FR-47 acceptance catalog are in Appendix A.
 
 ### 4.1 Launch and mode selection
 
@@ -333,6 +338,122 @@ The 12 feature modules below define user stories, end-to-end flows, Gherkin acce
 | Network/OS failure | Show concise operation errors and preserve terminal state; opening a file without an app reports that limitation. |
 | Timeout | No application-level deadline is defined; keep progress visible and the interface responsive until the OS call returns; do not retry automatically. |
 
+### 4.13 File-content preview
+
+**User story:** As a desktop or headless user, I want to inspect supported file contents without launching another application so I can identify a file before acting on it.
+
+**Workflow:** Select a regular file; choose Preview Text or press `v` in the TUI; inspect UTF-8 text up to 1 MiB. In the GUI, supported BMP, GIF, JPEG, PNG, and WebP images are decoded and scaled to fit. ZIP members can be previewed as UTF-8 text up to 1 MiB from the archive browser.
+
+**Acceptance criteria:**
+
+- Given a readable UTF-8 regular file no larger than 1 MiB, when Preview Text is chosen, then the contents appear in a read-only viewer without launching the system opener.
+- Given a supported raster image no larger than 64 MiB encoded and no larger than 8192 × 8192 pixels, when previewed in the GUI, then it is decoded off the UI thread and scaled within the viewer while preserving aspect ratio.
+- Given an unsupported, binary, unreadable, or oversized file, when preview is requested, then an explanatory error appears and the file remains unchanged.
+- Given a file selected in the TUI, when `v` is pressed, then UTF-8 text is shown with keyboard scrolling; unsupported image display is reported as unavailable in the terminal.
+
+| UI state | Required behavior |
+| --- | --- |
+| Default | Viewer shows the selected file path and supported text or image content; the original file is not modified. |
+| Empty | An empty text file shows an empty viewer with its path and Close action. |
+| Loading/progress | Show Loading/Reading status while file bytes are read and decoded off the UI thread. |
+| Validation error | Reject directories, symbolic links, invalid UTF-8 text, unsupported image types, or files beyond the stated limits with a specific message. |
+| Network/OS failure | Show the OS read/decode error and keep the file listing available. |
+| Timeout | No application timeout is defined; the viewer stays responsive until the OS/decode worker returns and does not retry automatically. |
+
+### 4.14 Content indexing and search
+
+**User story:** As a user, I want to index the text in a folder tree and search it so I can find files by words in their contents.
+
+**Workflow:** Choose Index this folder’s text files in the GUI or press `i` in the TUI; wait for indexing; enable content search (`Search indexed contents` in the GUI or `I` in the TUI); enter a query. Reindex after external changes or when switching to another folder tree.
+
+**Acceptance criteria:**
+
+- Given a regular folder, when indexing starts, then it traverses descendant directories without following directory symlinks and skips hidden entries unless hidden visibility is enabled.
+- Given readable UTF-8 files up to 1 MiB each, when indexing completes, then they are available for case-insensitive substring search in the active folder tree.
+- Given files larger than 1 MiB, unreadable files, binary/non-UTF-8 files, or resource caps reached, when indexing completes, then those files are skipped and the summary reports indexed and skipped counts.
+- Given content search is enabled without an index for the current folder, when a query is entered, then the app instructs the user to index that folder first.
+- Given application-managed content changes, when a text file is saved or an operation mutates the listing, then the prior index is discarded and must be rebuilt before content search.
+
+| UI state | Required behavior |
+| --- | --- |
+| Default | Name search remains the default; content search uses only the current in-memory index. |
+| Empty | A query with no content matches shows No results found and Clear search. |
+| Loading/progress | Show Indexing text files or Searching status; work runs in a background thread and keeps input responsive. |
+| Validation error | Reject a non-directory or symbolic-link indexing root; content search without a current-root index gives an Index this folder prompt. |
+| Network/OS failure | Skip inaccessible descendants/files, report indexed/skipped counts, and report a root-level failure. |
+| Timeout | No deadline is defined; keep progress visible until the worker returns and do not retry automatically. |
+
+Resource limits: maximum 100,000 indexed files and 128 MiB of indexed text per build; each file is limited to 1 MiB. The index is process-local, is not written to disk, and is not sent over a network.
+
+### 4.15 UTF-8 text editing
+
+**User story:** As a user, I want to edit a supported text file in File Browser and save it without silently overwriting external changes.
+
+**Workflow:** Choose Edit Text from the GUI context menu/details pane or press `e` in the TUI; edit the UTF-8 contents; choose Save or press Ctrl+S; explicitly discard or close when there are unsaved changes.
+
+**Acceptance criteria:**
+
+- Given a regular non-symlink UTF-8 file no larger than 1 MiB, when Edit Text is chosen, then its contents appear in an editable buffer and the source remains unchanged until Save.
+- Given unchanged source revision metadata, when Save is requested, then the app stages and replaces the file while preserving its permissions.
+- Given source size or modified time changed after the editor loaded, when Save is requested, then saving is rejected with a stale-file message and Reload from disk is offered.
+- Given an edit buffer has unsaved changes, when the user closes the editor, then the app requires an explicit Discard choice or save.
+
+| UI state | Required behavior |
+| --- | --- |
+| Default | Show path, editable buffer, and Save/Close controls; TUI shows a caret marker and key help. |
+| Empty | Empty files open as editable empty buffers. |
+| Loading/progress | Load and save on a worker thread; disable editing while a save is in progress and show status. |
+| Validation error | Reject non-regular files, symlinks, invalid UTF-8, files over 1 MiB, and stale revisions; keep unsaved text visible. |
+| Network/OS failure | Keep the edit buffer and show the OS write error; do not claim the file was saved. |
+| Timeout | No application deadline is defined; keep the editor responsive until the read/write worker returns and do not retry automatically. |
+
+### 4.16 ZIP archive browsing
+
+**User story:** As a user, I want to browse files and folders inside ZIP archives without extracting them first.
+
+**Workflow:** Choose Browse ZIP archive from a `.zip` file’s GUI context menu or press `a` on a selected `.zip` in the TUI; navigate direct children with Open/Enter; preview UTF-8 text members; use Backspace/Up to navigate to a parent and Esc to close.
+
+**Acceptance criteria:**
+
+- Given a readable ZIP archive with at most 100,000 entries, when opened, then the app lists direct children and their file sizes without extracting data.
+- Given a nested archive folder, when opened, then only its direct child folders and files are shown; parent navigation returns to the preceding archive folder.
+- Given an archive member path that is absolute or escapes the archive root, when listing or previewing, then it is excluded or rejected.
+- Given a text member up to 1 MiB, when Preview is chosen, then UTF-8 content appears read-only; unsupported/binary/oversized members show an error.
+- Given a corrupt, unsupported, or encrypted archive, when opened or read, then the error is shown without modifying the archive or filesystem.
+
+| UI state | Required behavior |
+| --- | --- |
+| Default | Show archive path, current internal folder, direct children, and parent/close controls. |
+| Empty | Show “This archive folder is empty.” |
+| Loading/progress | Read the archive directory or preview on a worker thread and show progress. |
+| Validation error | Reject invalid member paths and archives with more than 100,000 entries; archive operations remain read-only. |
+| Network/OS failure | Report open/read errors and offer Retry where the archive remains open. |
+| Timeout | No application deadline is defined; keep the interface responsive until the worker returns and do not retry automatically. |
+
+ZIP support is read-only: archive editing, extraction, and formats other than ZIP are out of scope.
+
+### 4.17 File-property editing
+
+**User story:** As a user, I want to change a file or folder’s read-only state and modified time from the Details pane, item menu, or TUI.
+
+**Workflow:** Select one regular file/folder; open Edit Properties or press `P` in the TUI; change Read-only and the local modified timestamp; save; review the operation result.
+
+**Acceptance criteria:**
+
+- Given one regular non-symlink file or directory, when Edit Properties opens, then current read-only and modified-time values are loaded.
+- Given a valid local timestamp in `YYYY-MM-DD HH:MM:SS` format, when Save is chosen, then the modified time and read-only state are applied using the current OS user’s permissions.
+- Given invalid/ambiguous local time or a symbolic link, when Save is requested, then the change is rejected with a corrective error and the prior property values remain available.
+- Given the OS denies a property update, when Save fails, then the OS error is shown and no success is reported.
+
+| UI state | Required behavior |
+| --- | --- |
+| Default | Show the selected path, Read-only checkbox, local modified-time field, Save, and Close. |
+| Empty | Not applicable; the dialog requires one existing selected item. |
+| Loading/progress | Load and save properties on a worker thread; disable editing while either operation is pending. |
+| Validation error | Keep the dialog open and mark the timestamp format or unsupported symbolic-link condition. |
+| Network/OS failure | Show the OS error and retain entered values for correction/retry. |
+| Timeout | No application deadline is defined; keep the interface responsive until the OS worker returns and do not retry automatically. |
+
 ## 5. Non-Functional & Technical Specifications
 
 ### 5.1 Platforms and display support
@@ -357,6 +478,7 @@ This is a native desktop/terminal application; a browser compatibility matrix an
 - P95 first usable GUI frame within 2.0 seconds across 10 cold starts.
 - P95 folder listing of up to 10,000 entries visible within 1.0 second after navigation, measured across 30 runs on a local volume.
 - P95 recursive name search over up to 100,000 entries settles within 3.0 seconds, measured across 30 runs on a local volume.
+- P95 content-index build over 100,000 local files and up to 128 MiB of eligible UTF-8 content completes within 15 seconds, measured across 30 runs; the index itself stores no more than 128 MiB of normalized text.
 - No user-input event is blocked by filesystem work for more than 100 ms.
 - Process working set remains at or below 512 MiB during the 100,000-entry search scenario.
 
@@ -367,7 +489,9 @@ The working-set target is a provisional resource budget. Battery consumption is 
 - The app has no sign-in, accounts, network service, synchronization, or production telemetry.
 - OAuth, passkeys, MFA, sessions, and role-based access control do not apply; the local OS user and filesystem ACLs are the authorization boundary.
 - Filesystem access runs with the launching user’s OS identity and permissions; the app does not elevate privileges.
-- Listing and search use names and metadata. The app does not index or upload file contents.
+- Content indexing is user-initiated and scans only the selected local folder tree; the in-memory index is discarded when replaced or when the process exits. The app does not upload file contents.
+- Text preview/edit reads UTF-8 regular files up to 1 MiB; the GUI image preview supports BMP, GIF, JPEG, PNG, and WebP with encoded-size and decoder dimension/allocation limits.
+- ZIP browsing is read-only, validates member paths, and does not extract archive contents. Other archive formats are not supported.
 - File opening delegates a path to the OS default application. File Browser does not inspect the opened application’s behavior.
 - GUI file clipboard integration uses file paths; Copy Path writes plain-text paths. The TUI queue is process-local and stores paths only in memory.
 - Favorites, recent locations, and GUI preferences are stored locally in the user’s configuration area. The exact retention and reset UI are not currently specified.
@@ -389,7 +513,7 @@ Core browsing and operations are local and do not require an internet connection
 ### 5.6 Technical architecture
 
 - Application language: Rust, edition 2024; declared minimum Rust version 1.89.
-- Desktop UI: eframe/egui; terminal UI: Ratatui/Crossterm; both call the shared `src/core.rs` filesystem layer.
+- Desktop UI: eframe/egui; terminal UI: Ratatui/Crossterm; both call the shared `src/core.rs` filesystem layer and `src/content_index.rs` in-memory text index.
 - Platform adapters isolate GUI detection, file clipboard, local-time formatting, mounted-location discovery, file opening, and trash behavior.
 - Platform-specific capabilities are conditional Rust modules; app-authored product code remains Rust.
 - Linux package production and Linux file-manager clipboard integration are roadmap items, not current release capabilities.
@@ -427,6 +551,8 @@ Future telemetry requires an explicit product decision, opt-in design, data mini
 | Ratatui/Crossterm | Terminal layout, rendering, and keyboard input. | Requires an interactive terminal for TUI mode. |
 | `trash` | Move items to the platform trash where supported. | OS/distro behavior must be validated on each release target. |
 | `opener` | Launch files with the system default application. | Failure is surfaced; the app does not bundle file viewers. |
+| `image` | Decode BMP, GIF, JPEG, PNG, and WebP previews in the desktop GUI. | Decoding is bounded; terminal image rendering is not supported. |
+| `zip` | List ZIP members and preview bounded UTF-8 text without extraction. | Read-only browsing; unsafe member paths are rejected. |
 | `dirs` and OS APIs | Home/config paths, Windows CF_HDROP clipboard and platform capability discovery. | Preferences and paths remain under the current user context. |
 | Filesystem and mounted volumes | Listing, metadata, copy/move, symlinks, and search. | Permissions and failure semantics are inherited from the OS/filesystem. |
 
@@ -435,7 +561,9 @@ Future telemetry requires an explicit product decision, opt-in design, data mini
 - Windows is the first release target; Linux packages and file-manager clipboard support follow in a separate milestone.
 - macOS Finder conventions are implemented, but the supported macOS version and release validation status need confirmation.
 - Rust-only means Rust-authored application logic; using Rust dependencies and OS APIs is allowed.
-- The app is a local file manager. It is not a synchronization client, server, file editor, or content indexer.
+- The app is a local file manager with a bounded UTF-8 text editor and process-local content index; it is not a synchronization client or server.
+- Content indexes are volatile and limited to one active folder tree; users rebuild after application-managed changes or external edits.
+- Property editing is limited to read-only state and modified time; archive browsing is limited to ZIP and is read-only.
 - Multi-item copy/move is sequential and can partially complete on OS error; no operation history or rollback is provided.
 - Preferences and recent/favorite paths may reveal folder names to anyone with access to the user profile; OS profile permissions are the storage protection.
 
@@ -547,7 +675,7 @@ GUI sorting is available from sortable column headings and the Sort menu. Re-sel
 - GUI double-click or context-menu Open launches a file through the system default application.
 - The Details pane provides Open for a single file or folder and Copy Path for a single selection; a multi-selection can copy all selected paths as newline-separated text.
 - TUI Enter/Right attempts to launch the selected file through the system opener. If no suitable desktop application exists, the TUI reports that it could not launch it; file management itself remains available.
-- The app does not preview file contents.
+- The app previews bounded UTF-8 text and selected raster image formats in the GUI; the TUI previews UTF-8 text only. ZIP archive browsing and content indexing are described in sections 4.13–4.16.
 
 #### 5.9 End-to-end journeys
 
@@ -682,7 +810,7 @@ The TUI fills the terminal with three stacked regions:
 2. **Files list** (remaining height, minimum two rows): a cyan selection marker, platform-colored folder marker (yellow on Windows/Linux, light blue on macOS), magenta symlink marker, and a name truncated to fit the terminal width. File markers use the terminal's default text color. Terminal control and bidi-formatting characters are escaped in displayed names; file operations use the original names. Items in the app-local cut queue appear dimmed until a complete move clears the queue. At 52 columns and wider, file sizes occupy a right-aligned column; narrower terminals hide the size column to preserve name space. Directories do not show a size. The focused row uses reverse highlighting.
 3. **Status/help footer** (six rows at widths of 80 columns or more, seven rows at 52–79 columns, nine rows at 40–51 columns, and ten rows below 40 columns; naming/path prompts use three, four, or five rows as terminal width decreases, and delete/conflict prompts use five): current status and a responsive keyboard legend, or the active prompt with item names and transfer destination where relevant. Errors are light red, partial transfer outcomes and blocked actions are yellow, and the keyboard legend stays in the terminal's default color. While search input is active, the general legend is replaced with responsive search instructions. Selection count appears in the status line; a pending cut queue keeps its item count visible while browsing other folders.
 
-The UI is keyboard-only. It has no preview or separate details pane. Terminal raw mode and the alternate screen must be restored on normal exit and on errors after terminal entry.
+The UI is keyboard-only. It supports UTF-8 text preview and editing, ZIP browsing, content indexing, and file-property editing through focused views and prompts; it has no image preview or separate Details pane. Terminal raw mode and the alternate screen must be restored on normal exit and on errors after terminal entry.
 
 When the folder is empty, a search has no matches, or a listing/search is still loading or has failed, the list area displays a short status instead of remaining blank. Search results replace the prior visible rows while a new query is in flight.
 
@@ -698,6 +826,12 @@ When the folder is empty, a search has no matches, or a listing/search is still 
 | `g` / Ctrl+L | Enter a folder path and navigate there; relative paths use the current folder and `~` expands to Home |
 | F5 | Refresh the folder while preserving the active search, selection, and cursor when still visible |
 | `/` | Start recursive name search |
+| `i` / `I` | Index the current folder tree / toggle content-search mode |
+| `v` | Preview selected/current UTF-8 text file |
+| `e` | Edit selected/current UTF-8 text file; Ctrl+S saves, Esc closes, and `x` discards changes |
+| `P` | Edit selected/current file or folder properties (read-only and modified time) |
+| `a` | Browse the selected/current ZIP archive |
+| Archive browser | Enter opens a folder/member, `v` previews UTF-8 text members, Backspace/Left goes to the parent, and Esc closes |
 | Search text | Edit at the visible cursor; Left/Right move by grapheme, Home/End move to either end, Backspace/Delete remove one grapheme, and Ctrl+A clears the query. Results update as text changes; Enter keeps the query and exits input; Esc exits and clears search. The footer replaces its general key legend with responsive search-specific guidance while input is active. |
 | Space | Toggle current item in the multi-selection |
 | Ctrl+A | Select all visible items |
@@ -766,6 +900,11 @@ When no explicit selection exists, copy, cut, rename, and delete use the current
 | FR-40 | Preserve usable file-list width while resizing side panes. | With the Navigation and Details panes open, their responsive maximum widths leave at least 320 logical points for the main pane; each splitter shows a horizontal-resize cursor and a pane-specific tooltip. Each pane remains resizable within its minimum and maximum widths. Automatically constrained widths do not replace the preferred widths, which return when the window has room. |
 | FR-41 | Edit TUI search and prompts at an insertion point. | Left/Right move by grapheme; Home/End, Backspace/Delete, and Ctrl+A operate on the text at the cursor; the cursor remains visible when long inputs are compacted to the terminal width. |
 | FR-42 | Explain why command-row actions are disabled. | Hovering disabled Cut, Copy, Rename, Delete/Move to Trash, or Paste controls explains the missing selection or clipboard requirement; enabled controls retain their action and shortcut hints. |
+| FR-43 | Preview bounded file contents. | GUI previews UTF-8 text up to 1 MiB and BMP/GIF/JPEG/PNG/WebP images within decoder limits; TUI previews UTF-8 text and reports image preview as unavailable. |
+| FR-44 | Index and search file contents. | Indexes UTF-8 files up to 1 MiB without following descendant directory symlinks; limits each build to 100,000 files and 128 MiB of text; the volatile index is cleared after app-managed saves and file operations. |
+| FR-45 | Edit UTF-8 text files. | GUI and TUI edit files up to 1 MiB, protect unsaved changes, and reject saves when the file revision is stale. |
+| FR-46 | Browse ZIP archives without extraction. | GUI and TUI list safe archive entries and preview bounded UTF-8 text members; archive contents remain read-only. |
+| FR-47 | Edit basic file properties. | GUI and TUI update read-only state and modified time for one regular non-symlink file or directory. |
 
 ### A.6 Design, accessibility, and resilience requirements
 

@@ -613,6 +613,8 @@ impl App {
                             Ok(revision) => {
                                 document.revision = Some(revision);
                                 document.original_contents = document.contents.clone();
+                                self.content_index = None;
+                                self.index_generation = self.index_generation.wrapping_add(1);
                                 self.message = "File saved".into();
                             }
                             Err(error) => document.error = Some(error),
@@ -625,12 +627,17 @@ impl App {
                 Event::Finished(message, clear_after) => {
                     self.active_operations = self.active_operations.saturating_sub(1);
                     self.message = message;
+                    self.content_index = None;
+                    self.index_generation = self.index_generation.wrapping_add(1);
                     if let Some(paths) = clear_after
                         && self.cut
                         && self.clipboard == paths
                     {
                         self.clipboard.clear();
                         self.cut = false;
+                    }
+                    if self.content_search && !self.query.trim().is_empty() {
+                        self.search();
                     }
                     if self.quit_when_idle && self.active_operations == 0 {
                         self.quit = true;

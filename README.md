@@ -18,6 +18,8 @@ The desktop layout combines Explorer-style tabs and sortable Details columns wit
 
 In list and Details views, the whole row is clickable, including its metadata columns. Single-click an item to select it and double-click to open it. Dragging starts only after pressing and holding an item and moving it; hovering over a name does not start a drag. Drag selected items onto folders, sidebar locations, or empty folder space to move them, or drop files from another app into a folder. These pointer interactions are available in the desktop GUI; the TUI uses its keyboard copy/cut/paste queue.
 
+Preview and edit UTF-8 text files up to 1 MiB. The desktop GUI also previews BMP, GIF, JPEG, PNG, and WebP images. Index a folder tree to search eligible file contents; the index stays in memory and is cleared after app-managed file changes. ZIP files can be browsed without extraction, with UTF-8 text previews for archive members. Properties let you change read-only state and modified time.
+
 ## TUI keys
 
 | Key | Action |
@@ -26,11 +28,17 @@ In list and Details views, the whole row is clickable, including its metadata co
 | Enter / Right | Open folder or launch file |
 | Backspace / Left | Go to parent folder |
 | `/` | Search recursively in the current folder tree |
+| `i` / `I` | Index this folder tree / toggle content search |
+| `v` / `e` | Preview selected UTF-8 text / edit it |
+| `P` | Edit read-only state and modified time |
+| `a` | Browse a selected ZIP archive |
 | Space | Add/remove current entry from selection |
 | `n` / F2 | Create folder / rename |
 | `c` / `x` / `p` | Copy / cut / paste |
 | `d` | Move selection to trash |
 | `h` / `s` | Toggle hidden files / cycle sort |
 | `q` | Quit |
+
+In the TUI text editor, press Ctrl+S to save, Esc to close, or `x` to discard edits. Content indexing is limited to 100,000 files and 128 MiB of text per build; each file is limited to 1 MiB. Image preview is GUI-only, ZIP browsing is read-only, and content indexes are not saved between launches.
 
 The Linux milestone targets Ubuntu (`.deb`) and openSUSE (`.rpm`).

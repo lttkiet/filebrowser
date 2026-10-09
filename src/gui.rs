@@ -1810,6 +1810,9 @@ impl Browser {
                             Ok(revision) => {
                                 dialog.revision = Some(revision);
                                 dialog.original_contents = dialog.contents.clone();
+                                self.content_index = None;
+                                self.content_index_generation =
+                                    self.content_index_generation.wrapping_add(1);
                                 self.message = "File saved".into();
                             }
                             Err(error) => dialog.error = Some(error),
@@ -1900,6 +1903,9 @@ impl Browser {
                 ) => {
                     self.active_operations = self.active_operations.saturating_sub(1);
                     self.message = message;
+                    self.content_index = None;
+                    self.content_index_generation =
+                        self.content_index_generation.wrapping_add(1);
                     if let Some(paths) = clear_after
                         && self.cut
                         && self.clipboard == paths
@@ -1938,6 +1944,9 @@ impl Browser {
                                 self.icon_scroll_target = Some(focused);
                             }
                         }
+                    }
+                    if self.content_search && !self.query.trim().is_empty() {
+                        self.search();
                     }
                 }
                 _ => {}
