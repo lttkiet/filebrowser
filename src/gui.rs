@@ -3859,7 +3859,12 @@ impl Browser {
                                 };
                                 ui.spinner().on_hover_text(detail);
                             }
-                            ui.add(egui::Label::new(&self.message).truncate())
+                            let status_color = status_message_color(ui, &self.message);
+                            let status_text = status_color.map_or_else(
+                                || egui::RichText::new(&self.message),
+                                |color| egui::RichText::new(&self.message).color(color),
+                            );
+                            ui.add(egui::Label::new(status_text).truncate())
                                 .on_hover_text(&self.message);
                         }
                     });
@@ -4341,6 +4346,26 @@ fn folder_name(path: &Path) -> String {
         .map(|name| name.to_string_lossy().into_owned())
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| path.display().to_string())
+}
+
+fn status_message_color(ui: &egui::Ui, message: &str) -> Option<egui::Color32> {
+    if message.starts_with("Error:")
+        || message.starts_with("Search error:")
+        || message.starts_with("Could not ")
+        || message.starts_with("Drop destination")
+        || message.contains("refresh failed:")
+    {
+        Some(ui.visuals().error_fg_color)
+    } else if message.starts_with("Skipped conflicting items:")
+        || message.starts_with("Saved to app clipboard:")
+        || message.starts_with("Clipboard has no file paths")
+        || message.starts_with("A folder cannot be dropped")
+        || message.starts_with("Drop items onto a folder")
+    {
+        Some(ui.visuals().warn_fg_color)
+    } else {
+        None
+    }
 }
 
 fn navigation_location_label(path: &Path, peers: &[PathBuf]) -> String {
