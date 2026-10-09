@@ -24,6 +24,8 @@ enum Event {
     Searched(u64, String, Result<Vec<Entry>, String>),
     TextLoaded(u64, PathBuf, Result<core::TextFile, String>),
     TextSaved(u64, PathBuf, Result<core::FileRevision, String>),
+    ArchiveListed(u64, PathBuf, String, Result<Vec<core::ArchiveEntry>, String>),
+    ArchiveText(u64, PathBuf, String, Result<String, String>),
     PropertiesLoaded(u64, PathBuf, Result<core::FileProperties, String>),
     PropertiesSaved(u64, PathBuf, Result<core::FileProperties, String>),
     Indexed(u64, PathBuf, Result<crate::content_index::ContentIndex, String>),
@@ -62,6 +64,17 @@ struct PropertiesDialog {
     loading: bool,
     saving: bool,
     error: Option<String>,
+}
+
+struct ArchiveDialog {
+    generation: u64,
+    path: PathBuf,
+    directory: String,
+    entries: Vec<core::ArchiveEntry>,
+    loading: bool,
+    error: Option<String>,
+    preview_member: Option<String>,
+    preview_text: String,
 }
 
 enum Confirm {
@@ -192,6 +205,7 @@ struct Browser {
     content_index_generation: u64,
     document_dialog: Option<DocumentDialog>,
     properties_dialog: Option<PropertiesDialog>,
+    archive_dialog: Option<ArchiveDialog>,
     dialog_generation: u64,
     listing_generation: u64,
     query: String,
@@ -276,6 +290,7 @@ impl Browser {
             content_index_generation: 0,
             document_dialog: None,
             properties_dialog: None,
+            archive_dialog: None,
             dialog_generation: 0,
             listing_generation: 0,
             query: String::new(),
@@ -814,6 +829,60 @@ impl Browser {
         thread::spawn(move || {
             let result = core::file_properties(&path).map_err(|error| error.to_string());
             let _ = tx.send(Event::PropertiesLoaded(generation, path, result));
+        });
+    }
+
+    fn open_archive(&mut self, path: PathBuf) {
+        self.archive_dialog = Some(ArchiveDialog {
+            generation: 0,
+            path,
+            directory: String::new(),
+            entries: Vec::new(),
+            loading: false,
+            error: None,
+            preview_member: None,
+            preview_text: String::new(),
+        });
+        self.load_archive_directory(String::new());
+    }
+
+    fn load_archive_directory(&mut self, directory: String) {
+        let Some(dialog) = self.archive_dialog.as_mut() else {
+            return;
+        };
+        self.dialog_generation = self.dialog_generation.wrapping_add(1);
+        let generation = self.dialog_generation;
+        let path = dialog.path.clone();
+        dialog.generation = generation;
+        dialog.directory = directory.clone();
+        dialog.entries.clear();
+        dialog.loading = true;
+        dialog.error = None;
+        dialog.preview_member = None;
+        let tx = self.events_tx.clone();
+        thread::spawn(move || {
+            let result = core::list_archive(&path, &directory).map_err(|error| error.to_string());
+            let _ = tx.send(Event::ArchiveListed(generation, path, directory, result));
+        });
+    }
+
+    fn preview_archive_member(&mut self, member: String) {
+        let Some(dialog) = self.archive_dialog.as_mut() else {
+            return;
+        };
+        self.dialog_generation = self.dialog_generation.wrapping_add(1);
+        let generation = self.dialog_generation;
+        let path = dialog.path.clone();
+        dialog.generation = generation;
+        dialog.preview_member = Some(member.clone());
+        dialog.preview_text.clear();
+        dialog.loading = true;
+        dialog.error = None;
+        let tx = self.events_tx.clone();
+        thread::spawn(move || {
+            let result = core::read_archive_text(&path, &member, 1_048_576)
+                .map_err(|error| error.to_string());
+            let _ = tx.send(Event::ArchiveText(generation, path, member, result));
         });
     }
 
@@ -1712,6 +1781,36 @@ impl Browser {
                                 dialog.original_contents = dialog.contents.clone();
                                 self.message = "File saved".into();
                             }
+                            Err(error) => dialog.error = Some(error),
+                        }
+                    }
+                }
+                Event::ArchiveListed(generation, path, directory, result)
+                    if self.archive_dialog.as_ref().is_some_and(|dialog| {
+                        dialog.generation == generation
+                            && dialog.path == path
+                            && dialog.directory == directory
+                    }) =>
+                {
+                    if let Some(dialog) = self.archive_dialog.as_mut() {
+                        dialog.loading = false;
+                        match result {
+                            Ok(entries) => dialog.entries = entries,
+                            Err(error) => dialog.error = Some(error),
+                        }
+                    }
+                }
+                Event::ArchiveText(generation, path, member, result)
+                    if self.archive_dialog.as_ref().is_some_and(|dialog| {
+                        dialog.generation == generation
+                            && dialog.path == path
+                            && dialog.preview_member.as_deref() == Some(member.as_str())
+                    }) =>
+                {
+                    if let Some(dialog) = self.archive_dialog.as_mut() {
+                        dialog.loading = false;
+                        match result {
+                            Ok(contents) => dialog.preview_text = contents,
                             Err(error) => dialog.error = Some(error),
                         }
                     }
@@ -3292,6 +3391,15 @@ impl Browser {
                 }
                 if !entry.is_dir {
                     ui.separator();
+                    if entry
+                        .path
+                        .extension()
+                        .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
+                        && ui.button("Browse ZIP archive").clicked()
+                    {
+                        self.open_archive(entry.path.clone());
+                        ui.close();
+                    }
                     if ui.button("Preview Text").clicked() {
                         self.open_document(entry.path.clone(), DocumentMode::Preview);
                         ui.close();
@@ -4739,6 +4847,124 @@ impl Browser {
         }
         if save_properties {
             self.save_properties();
+        }
+
+        let mut close_archive = false;
+        let mut open_archive_directory = None;
+        let mut preview_archive_member = None;
+        let mut retry_archive = false;
+        if let Some(mut dialog) = self.archive_dialog.take() {
+            let mut open = true;
+            let mut close_requested = false;
+            egui::Window::new(format!("Archive — {}", item_name(&dialog.path)))
+                .id(egui::Id::new("archive-browser-dialog"))
+                .open(&mut open)
+                .default_size([620.0, 480.0])
+                .resizable(true)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.label(dialog.path.display().to_string());
+                    if ui.small_button("Close").clicked() {
+                        close_requested = true;
+                    }
+                    ui.horizontal(|ui| {
+                        if dialog.preview_member.is_some() {
+                            if ui.button("← Archive contents").clicked() {
+                                open_archive_directory = Some(dialog.directory.clone());
+                            }
+                            ui.label(dialog.preview_member.as_deref().unwrap_or_default());
+                        } else {
+                            let current = if dialog.directory.is_empty() {
+                                "/".to_owned()
+                            } else {
+                                format!("/{}", dialog.directory.trim_end_matches('/'))
+                            };
+                            ui.label(current);
+                            if !dialog.directory.is_empty() && ui.button("Up").clicked() {
+                                let parent = dialog
+                                    .directory
+                                    .trim_end_matches('/')
+                                    .rsplit_once('/')
+                                    .map_or_else(String::new, |(parent, _)| parent.to_owned());
+                                open_archive_directory = Some(parent);
+                            }
+                        }
+                    });
+                    ui.separator();
+                    if dialog.loading {
+                        ui.spinner();
+                        ui.label("Reading archive…");
+                    } else if let Some(error) = &dialog.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                        if ui.button("Retry").clicked() {
+                            retry_archive = true;
+                        }
+                    } else if dialog.preview_member.is_some() {
+                        egui::ScrollArea::both()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.add_sized(
+                                    ui.available_size(),
+                                    egui::TextEdit::multiline(&mut dialog.preview_text)
+                                        .font(egui::TextStyle::Monospace)
+                                        .interactive(false)
+                                        .desired_width(f32::INFINITY),
+                                );
+                            });
+                    } else if dialog.entries.is_empty() {
+                        ui.label("This archive folder is empty.");
+                    } else {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                for entry in &dialog.entries {
+                                    ui.horizontal(|ui| {
+                                        ui.label(if entry.is_dir { "📁" } else { "📄" });
+                                        ui.label(&entry.name).on_hover_text(&entry.member_path);
+                                        if !entry.is_dir {
+                                            ui.label(display::format_size(entry.size));
+                                        }
+                                        let action = if entry.is_dir { "Open" } else { "Preview" };
+                                        if ui.button(action).clicked() {
+                                            if entry.is_dir {
+                                                open_archive_directory =
+                                                    Some(entry.member_path.clone());
+                                            } else {
+                                                preview_archive_member =
+                                                    Some(entry.member_path.clone());
+                                            }
+                                        }
+                                    });
+                                }
+                            });
+                    }
+                });
+            if close_requested {
+                open = false;
+            }
+            if open {
+                self.archive_dialog = Some(dialog);
+            } else {
+                close_archive = true;
+            }
+        }
+        if close_archive {
+            self.archive_dialog = None;
+        }
+        if retry_archive
+            && let Some(dialog) = self.archive_dialog.as_ref()
+        {
+            if let Some(member) = dialog.preview_member.clone() {
+                self.preview_archive_member(member);
+            } else {
+                self.load_archive_directory(dialog.directory.clone());
+            }
+        }
+        if let Some(directory) = open_archive_directory {
+            self.load_archive_directory(directory);
+        }
+        if let Some(member) = preview_archive_member {
+            self.preview_archive_member(member);
         }
     }
 

@@ -1,6 +1,7 @@
 use std::{
+    collections::BTreeMap,
     fs,
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::SystemTime,
@@ -34,6 +35,91 @@ pub struct TextFile {
 pub struct FileProperties {
     pub read_only: bool,
     pub modified: Option<SystemTime>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ArchiveEntry {
+    pub member_path: String,
+    pub name: String,
+    pub is_dir: bool,
+    pub size: u64,
+}
+
+pub fn list_archive(path: &Path, directory: &str) -> anyhow::Result<Vec<ArchiveEntry>> {
+    let mut archive = zip::ZipArchive::new(fs::File::open(path)?)?;
+    if archive.len() > 100_000 {
+        anyhow::bail!("Archive has too many entries to browse safely");
+    }
+    let prefix = directory.trim_matches('/');
+    let prefix = if prefix.is_empty() {
+        String::new()
+    } else {
+        format!("{prefix}/")
+    };
+    let mut entries = BTreeMap::<String, ArchiveEntry>::new();
+    for index in 0..archive.len() {
+        let file = archive.by_index(index)?;
+        let Some(enclosed) = file.enclosed_name() else {
+            continue;
+        };
+        let Some(name) = enclosed.to_str() else {
+            continue;
+        };
+        let name = name.replace('\\', "/");
+        let Some(relative) = name.strip_prefix(&prefix) else {
+            continue;
+        };
+        if relative.is_empty() {
+            continue;
+        }
+        let (child_name, nested) = relative
+            .split_once('/')
+            .map_or((relative, false), |(name, _)| (name, true));
+        if child_name.is_empty() {
+            continue;
+        }
+        let is_dir = nested || file.is_dir();
+        let member_path = if is_dir {
+            format!("{}{child_name}/", prefix)
+        } else {
+            format!("{}{child_name}", prefix)
+        };
+        entries.entry(member_path.clone()).or_insert_with(|| ArchiveEntry {
+            member_path,
+            name: child_name.to_owned(),
+            is_dir,
+            size: if is_dir { 0 } else { file.size() },
+        });
+    }
+    Ok(entries.into_values().collect())
+}
+
+pub fn read_archive_text(path: &Path, member: &str, limit: u64) -> anyhow::Result<String> {
+    let normalized = Path::new(member);
+    if normalized.is_absolute()
+        || normalized.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        anyhow::bail!("Archive member path is invalid");
+    }
+    let mut archive = zip::ZipArchive::new(fs::File::open(path)?)?;
+    let file = archive.by_name(member)?;
+    if file.is_dir() {
+        anyhow::bail!("Cannot preview an archive folder");
+    }
+    if file.size() > limit {
+        anyhow::bail!("Archive member is larger than the {limit}-byte preview limit");
+    }
+    let mut contents = String::new();
+    file.take(limit.saturating_add(1)).read_to_string(&mut contents)?;
+    if contents.len() as u64 > limit {
+        anyhow::bail!("Archive member exceeded the preview limit while reading");
+    }
+    Ok(contents)
 }
 
 pub fn read_text(path: &Path, limit: u64) -> anyhow::Result<TextFile> {
