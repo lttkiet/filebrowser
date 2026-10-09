@@ -1807,10 +1807,10 @@ impl Browser {
                 }
                 Event::TextSaved(generation, path, result) => {
                     let saved = result.is_ok();
+                    self.content_index = None;
+                    self.content_index_generation =
+                        self.content_index_generation.wrapping_add(1);
                     if saved {
-                        self.content_index = None;
-                        self.content_index_generation =
-                            self.content_index_generation.wrapping_add(1);
                         self.message = "File saved".into();
                     }
                     if let Some(dialog) = self.document_dialog.as_mut().filter(|dialog| {
@@ -1825,9 +1825,7 @@ impl Browser {
                             Err(error) => dialog.error = Some(error),
                         }
                     }
-                    if saved {
-                        self.refresh();
-                    }
+                    self.refresh();
                 }
                 Event::ArchiveListed(generation, path, directory, result)
                     if self.archive_dialog.as_ref().is_some_and(|dialog| {

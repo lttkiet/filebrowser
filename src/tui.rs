@@ -627,7 +627,8 @@ impl App {
                 }
                 Event::TextSaved(generation, path, result) => {
                     self.active_operations = self.active_operations.saturating_sub(1);
-                    let mut refresh = false;
+                    self.content_index = None;
+                    self.index_generation = self.index_generation.wrapping_add(1);
                     if let Some(document) = self.document.as_mut().filter(|document| {
                         document.generation == generation && document.path == path
                     }) {
@@ -636,17 +637,12 @@ impl App {
                             Ok(revision) => {
                                 document.revision = Some(revision);
                                 document.original_contents = document.contents.clone();
-                                self.content_index = None;
-                                self.index_generation = self.index_generation.wrapping_add(1);
                                 self.message = "File saved".into();
-                                refresh = true;
                             }
                             Err(error) => document.error = Some(error),
                         }
                     }
-                    if refresh {
-                        self.refresh();
-                    }
+                    self.refresh();
                     if self.quit_when_idle && self.active_operations == 0 {
                         self.quit = true;
                     }
