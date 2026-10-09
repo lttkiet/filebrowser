@@ -601,8 +601,24 @@ impl App {
             };
             format!("{status}\n{help}")
         };
+        let status_style = if self.prompt.is_some() {
+            Style::default()
+        } else {
+            footer_status_style(&self.message)
+        };
+        let status_lines = sanitize_terminal_text(&status)
+            .lines()
+            .enumerate()
+            .map(|(index, line)| {
+                if index == 0 {
+                    Line::from(Span::styled(line.to_owned(), status_style))
+                } else {
+                    Line::from(line.to_owned())
+                }
+            })
+            .collect::<Vec<_>>();
         frame.render_widget(
-            Paragraph::new(sanitize_terminal_text(&status))
+            Paragraph::new(status_lines)
                 .wrap(Wrap { trim: true })
                 .block(Block::default().borders(Borders::ALL)),
             chunks[2],
@@ -1185,6 +1201,22 @@ fn suffix_within_width(value: &str, max_width: usize) -> String {
         width += grapheme_width;
     }
     graphemes.into_iter().rev().collect()
+}
+
+fn footer_status_style(message: &str) -> Style {
+    if message.starts_with("Error:")
+        || message.starts_with("Search error:")
+        || message.starts_with("Could not ")
+        || message.contains("refresh failed:")
+    {
+        Style::default().fg(Color::LightRed)
+    } else if message.starts_with("Skipped conflicting items:")
+        || message.starts_with("Clipboard is empty")
+    {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    }
 }
 
 fn sanitize_terminal_text(value: &str) -> String {
