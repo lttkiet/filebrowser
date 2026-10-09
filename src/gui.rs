@@ -3365,7 +3365,7 @@ impl Browser {
                             let row_response = ui.interact(
                                 row_rect,
                                 ui.id().with(("entry-row", &entry.path)),
-                                egui::Sense::click_and_drag(),
+                                egui::Sense::hover(),
                             );
                             if selected {
                                 ui.painter().rect_filled(
@@ -3428,11 +3428,9 @@ impl Browser {
                             });
                         }
 
-                        let response = full_row_response
-                            .expect("first row cell creates the full-width interaction")
-                            .on_hover_text(format!(
-                                "{hover_text}\nRight-click or Shift+F10 for actions"
-                            ));
+                        let response = row.response().on_hover_text(format!(
+                            "{hover_text}\nRight-click or Shift+F10 for actions"
+                        ));
                         response.dnd_set_drag_payload(InternalDrag::Files(
                             self.drag_paths(&entry.path),
                         ));
