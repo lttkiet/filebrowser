@@ -1,71 +1,367 @@
-# Rust File Browser — Product Specification
+# File Browser — Product Requirements Document
 
-**Version:** 0.1.0 baseline  
-**Status:** Desktop GUI and TUI are implemented. Linux packaging and desktop integration remain roadmap work.  
-**Product name:** File Browser
+## 1. Document Control & Metadata
 
-This specification describes the current product as implemented in the repository, then identifies platform work that is still planned. It is intended to guide implementation, review, and acceptance testing. It does not imply that roadmap items are already shipped.
+| Field | Value |
+| --- | --- |
+| Product | File Browser |
+| Document | Product requirements and interaction specification |
+| Document version | 0.2.0 |
+| Product release baseline | 0.1.0 |
+| Status | Draft — implementation and platform validation in review |
+| Target release | Windows v1; Linux Ubuntu/openSUSE milestone follows |
+| Author | AI PM Agent |
+| Human reviewer | [Placeholder] |
+| Source of truth | This document; implementation status is called out separately from planned requirements |
 
-## 1. Product definition
+### Changelog
 
-File Browser is a local filesystem application with two Rust-authored interfaces:
+| Version | Date | Author | Change |
+| --- | --- | --- | --- |
+| 0.2.0 | 2026-10-10 | AI PM Agent | Reorganized as a complete PRD; added feature journeys, UI state matrices, non-functional targets, telemetry policy, and open questions. |
+| 0.1.0 | 2026-10-10 | AI PM Agent | Initial product and interaction specification. |
 
-- A desktop GUI using eframe/egui, following Windows Explorer conventions on Windows and Finder conventions on macOS.
-- A keyboard-driven TUI using Ratatui and Crossterm for terminals, including headless systems.
+## 2. Strategic Context & Vision
 
-Both interfaces use the same Rust filesystem core for listing, recursive name search, sorting, folder creation, rename, copy, move, and trash deletion. Platform adapters provide system file opening, trash behavior, modified-time display, and GUI file clipboard support where implemented.
+### Executive summary
 
-The application starts in the current user’s home directory. Files remain on the local filesystem; the application has no account, sync, or cloud workflow.
+File Browser is a local-first Rust application for managing files through either a Windows/Finder-inspired desktop interface or a keyboard-driven terminal interface. Both interfaces share filesystem behavior, allowing the same navigation, search, selection, and transfer model to work on graphical and headless systems without accounts or cloud services.
 
-## 2. Goals and product boundaries
+### Problem statement
 
-### Goals
+Desktop users need a predictable way to browse, find, and move local files, while remote and headless users often have only a terminal. Maintaining separate GUI and terminal utilities creates different behavior and makes file operations harder to learn consistently. File Browser combines both interfaces around one Rust core and uses familiar Explorer and Finder patterns for navigation, selection, tabs, and file operations.
 
-1. Make common file and folder operations available from either a desktop or terminal interface.
-2. Keep operation behavior consistent through a shared Rust core.
-3. Make navigation, sorting, search, and item selection predictable.
-4. Protect existing destination items by asking how to handle transfer conflicts.
-5. Keep filesystem work off the interactive UI loop and show operation outcomes.
-6. Support Windows v1 and provide a documented Linux path for Ubuntu and openSUSE.
+### Goals (in scope)
 
-### Current scope
+- Provide the core browse, search, select, create, rename, copy, move, open, and trash workflows in the desktop GUI and the TUI where a graphical integration is not required.
+- Keep filesystem work off interactive event loops and expose progress, errors, conflicts, and partial outcomes in the interface that started the operation.
+- Match common Windows Explorer and macOS Finder conventions for navigation, selection, sorting, tabs, and shortcuts while retaining platform-specific labels and capabilities.
+- Start from Home and automatically choose the GUI when a graphical session is available, otherwise the TUI when an interactive terminal is attached.
+- Deliver Windows v1; define Ubuntu `.deb` and openSUSE `.rpm` as the next Linux packaging targets.
+- Keep app-authored application code in Rust and keep files under the current OS user’s filesystem permissions.
 
-- Browse folders, navigate upward and through history, and open files with the operating system’s default application.
-- Pin and unpin folders in the GUI Favorites sidebar; keep those shortcuts across launches.
-- Remember GUI layout, hidden-item visibility, Details pane state, and sort order across launches.
-- Show/hide hidden entries, sort entries, and recursively search names.
-- Select multiple entries and create folders, rename, copy, move, and move items to the system trash.
-- Use GUI drag-and-drop and platform file clipboard integration where available.
-- Use an internal copy/cut/paste queue in the TUI.
-- Choose GUI or TUI automatically, with explicit `--gui` and `--tui` overrides.
+### Non-goals (out of scope)
 
-### Outside the current v0.1.0 scope
+- File-content preview, indexing, editing, archive browsing, or property editing.
+- Accounts, cloud storage, synchronization, remote administration, or production analytics telemetry.
+- Undo/redo, operation cancellation, persistent tabs, per-folder view settings, or user-defined Locations outside Favorites.
+- Touch-first layouts, a built-in terminal, or a web interface.
+- Linux packaging and file-manager clipboard interoperability in the Windows v1 milestone.
 
-- File previews, content indexing, archive browsing/editing, file editing, and property editing.
-- Undo/redo, operation cancellation, persistent tabs, per-folder view preferences, or user-defined Locations beyond Favorites.
-- Cloud storage, accounts, synchronization, remote administration, or a built-in terminal.
-- macOS Finder file clipboard interoperability, a Linux package build pipeline, or a Linux-specific desktop file clipboard adapter.
+## 3. Target Audience & Personas
 
-## 3. Users and primary tasks
+### Persona 1: Desktop file organizer
 
-### Desktop user
+- **Role/context:** Windows or macOS user who manages personal or work folders with a mouse and keyboard; comfortable with standard file-manager conventions.
+- **Motivation:** Find and organize files without changing their default applications or risking accidental replacement/deletion.
+- **Pain points:** Deep folder navigation, repeated destinations, unclear transfer conflicts, and losing selection context after sorting or navigation.
+- **Success:** Can locate an item, inspect its path, and complete a copy/move/rename/trash action with visible confirmation and recoverable deletion.
 
-Uses a mouse and keyboard to browse local drives and common folders, search for names, move or copy items, manage folders, and open files in their usual applications.
+### Persona 2: Headless and remote operator
 
-### Headless/terminal user
+- **Role/context:** User connected over SSH or working in a console without a graphical session.
+- **Motivation:** Perform routine file management using only the keyboard and without launching another app.
+- **Pain points:** GUI-only tools are unavailable; shell commands make selection, conflict handling, and safe trash behavior cumbersome.
+- **Success:** Can navigate, search names, select multiple entries, transfer files, resolve conflicts, and restore the terminal after exit.
 
-Uses keyboard navigation over SSH, a console, or another interactive terminal. Needs basic browsing and file operations without a graphical session, preview, or external application.
+### Persona 3: Keyboard-first user
 
-### Primary workflows
+- **Role/context:** User who prefers or requires keyboard operation, including users who benefit from visible focus and predictable shortcuts.
+- **Motivation:** Complete file tasks without relying on pointer precision.
+- **Pain points:** Hidden shortcut behavior, focus loss, and selection state that is difficult to distinguish.
+- **Success:** GUI core tasks are available from documented shortcuts and visible focus; all core TUI tasks are keyboard-accessible. Screen-reader conformance remains an open validation requirement, not a shipped claim.
 
-- Find an item by navigating folders or searching names below the current folder.
-- Open a folder or launch a file.
-- Select one or more items, copy/cut them, navigate to a destination, and paste.
-- Drag items onto a folder row in the GUI to move them; drop files from another application to copy them into the current folder or a hovered folder.
-- Create a folder, rename an item, or send selected items to the system trash.
-- Resolve destination conflicts by replacing, skipping, or canceling.
+## 4. Functional Specifications
 
-## 4. Platform and launch behavior
+The feature modules below define user stories, end-to-end flows, Gherkin acceptance criteria, and observable UI states. The detailed interaction rules, complete shortcut maps, and FR-01–FR-42 acceptance catalog are in Appendix A.
+
+### 4.1 Launch and mode selection
+
+**User story:** As a desktop or terminal user, I want the app to choose an interface that is usable in my current session so I can start managing files without configuring a mode first.
+
+**Workflow:** Launch with no arguments; detect GUI and terminal availability; choose GUI if available, otherwise TUI if stdin and stdout are interactive; fail with an actionable message if neither exists. `--gui` and `--tui` force a mode and report when its required environment is unavailable.
+
+**Acceptance criteria:**
+
+- Given a graphical session, when the user launches without an override, then the GUI opens at Home.
+- Given no graphical session and an interactive terminal, when the user launches without an override, then the TUI opens at Home.
+- Given neither environment, when the user launches, then the program exits with a message naming the required session types.
+- Given both overrides, when the user launches, then the program reports that only one mode may be selected.
+
+| UI state | Required behavior |
+| --- | --- |
+| Default | Open Home in the selected interface. |
+| Empty | An empty Home directory shows the documented empty-folder state. |
+| Loading/progress | GUI and TUI show listing progress without blocking the event loop. |
+| Validation error | Invalid or conflicting CLI arguments print usage/error text and exit without opening a partial interface. |
+| OS/session failure | Forced GUI without a graphical session or forced TUI without interactive stdin/stdout exits with the corresponding actionable error. |
+| Timeout | Session detection is synchronous; v0.1 has no startup timeout or automatic retry. |
+
+### 4.2 Navigation, tabs, and location access
+
+**User story:** As a desktop user, I want to move between folders using familiar history, breadcrumbs, tabs, and pinned locations; as a terminal user, I want parent/path navigation without a pointer.
+
+**Workflow:** Start at Home; browse through the sidebar, address path, history, or file list; open folders in the current or a new tab; return to parents/history; pin frequently used folders. In the TUI, use Enter/Right, Backspace/Left, and `g` for a path.
+
+**Acceptance criteria:**
+
+- Given a visible folder, when the user opens it, then the active location changes and the tab’s scroll and selection state are updated consistently.
+- Given a path in the address editor, when the user submits a valid path, then the app navigates there; when it does not exist or is inaccessible, then it reports the OS error and offers retry where specified.
+- Given a folder opened from search, when the user chooses Open Containing Folder, then its parent opens and the result is selected when still present.
+
+| UI state | Required behavior |
+| --- | --- |
+| Default | Show current path, navigation history, tabs, and available Home/Recent/Favorites/Locations entries. |
+| Empty | Empty folders retain navigation controls and show a create-folder action. |
+| Loading/progress | Show a loading state while the requested folder is listed; keep other controls responsive. |
+| Validation error | Reject malformed/unavailable paths with the OS error; do not silently switch to a different folder. |
+| Network/OS failure | A disconnected mount or inaccessible folder remains identifiable; report the error and keep the current path available for retry. |
+| Timeout | No application-level deadline is defined; keep progress visible and the interface responsive until the OS call returns; do not retry automatically. |
+
+### 4.3 Browse, sort, select, and inspect
+
+**User story:** As a desktop or terminal user, I want to scan folder contents, sort them, and select one or many items without losing track of focus.
+
+**Workflow:** Browse Details/List/Icons in the GUI or the terminal list; change sort key/direction; select with click, keyboard, or TUI Space; inspect metadata and copy paths in the GUI Details pane.
+
+**Acceptance criteria:**
+
+- Given a populated folder, when the user changes a sort key, then directories remain grouped before files and the active key/direction remains visible.
+- Given a Details/List row, when the user clicks anywhere through the visible pane edge, then it selects; a press without pointer movement remains a click, while click-and-move starts a drag.
+- Given multiple selected items, when the user invokes a selection action, then it operates on the selected set; the focused item remains visually distinct.
+
+| UI state | Required behavior |
+| --- | --- |
+| Default | Show name and available metadata; selected and focused items have distinct visual feedback. |
+| Empty | Distinguish an empty folder from a search with no matches and offer the relevant next action. |
+| Loading/progress | Preserve a visible pending state while listing or search results are being produced. |
+| Validation error | If an item disappears or an operation cannot access it, keep the error visible and retain remaining valid selections. |
+| Network/OS failure | Show inaccessible entry status where available; do not follow directory symlinks during recursive search. |
+| Timeout | No application-level deadline is defined; keep progress visible and the interface responsive until the OS call returns; do not retry automatically. |
+
+### 4.4 Recursive name search
+
+**User story:** As a user, I want to find descendants by name without opening each folder or scanning file contents.
+
+**Workflow:** Focus search; enter a case-insensitive name fragment; view results in the active layout; open a result or its parent; clear the query to return to the current folder.
+
+**Acceptance criteria:**
+
+- Given a query, when it changes, then results update after debounce and stale scans are discarded.
+- Given a nested matching item, when search completes, then the item appears with its parent location where the layout permits.
+- Given a directory symlink below the search root, when search traverses the tree, then it does not descend through that link.
+
+| UI state | Required behavior |
+| --- | --- |
+| Default | Show the current folder until the user starts a query. |
+| Empty | Show “No results found,” the active query, and Clear search. |
+| Loading/progress | Show “Searching…” and keep input responsive; replace stale results only with the latest completed query. |
+| Validation error | Empty query returns to the folder listing; invalid path/root errors are reported without changing the query silently. |
+| Network/OS failure | Skip inaccessible descendants; report failure to open the search root with retry. |
+| Timeout | No application-level deadline is defined; keep progress visible and the interface responsive until the OS call returns; do not retry automatically. |
+
+### 4.5 Create, rename, and move to trash
+
+**User story:** As a user, I want to create folders, rename items, and delete recoverably with clear confirmation and error feedback.
+
+**Workflow:** Start the requested action; enter a single path-component name where applicable; review destructive deletion details; confirm or cancel; select the created/renamed item when it remains visible.
+
+**Acceptance criteria:**
+
+- Given an empty valid folder name, when submitted, then creation is rejected and the user can correct it.
+- Given an existing destination name, when rename or creation is attempted, then the existing item remains unchanged and an error is shown.
+- Given a trash request, when confirmed, then the OS trash adapter is invoked; when canceled, then no item is moved.
+
+| UI state | Required behavior |
+| --- | --- |
+| Default | New Folder and Rename prompts focus the input; rename selects the basename while preserving a recognized extension. |
+| Empty | No selection disables selection-dependent toolbar actions; the TUI uses the cursor item fallback when no explicit selection exists. |
+| Loading/progress | Run filesystem mutations off the UI loop and show the operation label. |
+| Validation error | Reject empty, multi-component, invalid, or existing destination names; preserve the source item. |
+| Network/OS failure | Show the operation and OS error; do not claim success if trash or rename fails. |
+| Timeout | No application-level deadline is defined; keep progress visible and the interface responsive until the OS call returns; do not retry automatically. |
+
+### 4.6 Copy, move, clipboard, and drag-and-drop
+
+**User story:** As a user, I want to copy or move one or more items to a destination and resolve name conflicts before replacement.
+
+**Workflow:** Select items; copy/cut and paste, drag onto a GUI destination, or use the TUI internal queue; choose Replace, Skip, or Cancel when conflicts exist; review completion, skipped names, or errors.
+
+**Acceptance criteria:**
+
+- Given a same-volume internal GUI drop, when the user releases over a folder, then the default action is Move; cross-volume drops default to Copy.
+- Given a transfer conflict, when the user selects Skip, then non-conflicting items transfer and skipped names are reported; Cancel starts no transfer after preflight.
+- Given an invalid drop destination, when the user releases, then no transfer occurs and the UI reports the valid destination types.
+
+| UI state | Required behavior |
+| --- | --- |
+| Default | Paste controls reflect file-path availability; cut-pending items remain visibly dimmed until a complete move. |
+| Empty | Paste is disabled and explains that the clipboard has no file paths. |
+| Loading/progress | Show source count/name and destination; keep UI event processing active. |
+| Validation error | Reject self/descendant drops and show Replace/Skip/Cancel for conflicts. |
+| Network/OS failure | Report the failing operation and OS error; preserve retry queue after failed or partial moves; disclose that multi-item operations are not atomic. |
+| Timeout | No application-level deadline is defined; keep progress visible and the interface responsive until the OS call returns; do not retry automatically. |
+
+### 4.7 Open files and use the Details pane
+
+**User story:** As a desktop user, I want to inspect an item’s metadata and open it with its usual application; as a terminal user, I want the app to report when no opener is available.
+
+**Workflow:** Select an item; inspect name/type/location/size/modified time; copy path or open; for folders, navigate or open in a new tab.
+
+**Acceptance criteria:**
+
+- Given one selected item, when the Details pane is open, then it shows the item glyph, metadata, containing location, and relevant actions.
+- Given no selection, when the Details pane is open, then it shows the current folder and its item/search-result count.
+- Given a file without an available system application, when Open is invoked, then the UI reports the launch error and remains usable.
+
+| UI state | Required behavior |
+| --- | --- |
+| Default | Show selected-item metadata or the current-folder summary. |
+| Empty | With no selection, show the current folder rather than an empty pane. |
+| Loading/progress | Show search-pending state and count while results are being produced. |
+| Validation error | If the item is no longer available, keep the pane consistent with the remaining selection and show the error. |
+| Network/OS failure | Report default-app launch or path access errors; do not preview or modify file contents. |
+| Timeout | No application-level deadline is defined; keep progress visible and the interface responsive until the OS call returns; do not retry automatically. |
+
+### 4.8 Headless TUI interaction
+
+**User story:** As a remote or headless user, I want to complete file-management tasks with keyboard-only controls and leave my terminal restored after exit.
+
+**Workflow:** Navigate with arrows or `j`/`k`; search with `/`; select with Space; copy/cut/paste with `c`/`x`/`p`; create/rename with `n`/F2; trash with `d`; resolve conflicts; quit with `q` or Ctrl+C.
+
+**Acceptance criteria:**
+
+- Given a terminal below 52 columns, when the list renders, then names remain the priority and file sizes are hidden.
+- Given a long Unicode name or path, when rendered, then truncation occurs on grapheme boundaries using terminal display width.
+- Given normal exit or an error after terminal entry, when the TUI ends, then raw mode and the alternate screen are restored.
+
+| UI state | Required behavior |
+| --- | --- |
+| Default | Show path, file rows, selection/focus, status, and width-adaptive key help. |
+| Empty | Show distinct empty-folder and no-search-match messages. |
+| Loading/progress | Show listing/search/operation progress and keep keyboard polling responsive. |
+| Validation error | Keep prompts open for correctable invalid names; conflict prompts offer Replace/Skip/Cancel. |
+| Network/OS failure | Show concise operation errors and preserve terminal state; opening a file without an app reports that limitation. |
+| Timeout | No application-level deadline is defined; keep progress visible and the interface responsive until the OS call returns; do not retry automatically. |
+
+## 5. Non-Functional & Technical Specifications
+
+### 5.1 Platforms and display support
+
+| Target | Release state | Display contract |
+| --- | --- | --- |
+| Windows desktop | v1 target; GUI and TUI code are implemented. | GUI starts at 1180 × 760 logical points and has an 800 × 560 minimum inner size. |
+| macOS desktop | GUI/TUI code and Finder-specific labels/shortcuts are implemented; release-level OS/version validation is not recorded. | Same desktop window dimensions; Finder-blue folder glyphs and Command-key conventions. |
+| Linux desktop | Roadmap milestone for Ubuntu `.deb` and openSUSE `.rpm`; distribution validation remains outstanding. | eframe X11/Wayland support; window dimensions match desktop baseline. |
+| Headless terminal | TUI target on Windows, macOS, and Linux when stdin/stdout are interactive. | Layout adapts at widths below 52, 40, and 80 columns; narrow terminals prioritize names and keep prompts within the footer. |
+
+Minimum supported OS versions are not declared in the manifest and remain an open release decision. Touch input is not a supported target; desktop pointer targets are sized in logical points.
+
+### 5.2 Performance and responsiveness
+
+**Current implementation requirements:** directory listing, recursive search, and mutations execute on worker threads; GUI rows/cards are virtualized to visible content; the TUI polls input while work runs. Multi-item operations are sequential and are not batch-atomic.
+
+**Provisional release targets — not yet benchmarked:** on a reference Windows 11 PC with 8 logical CPU cores, 16 GB RAM, and NVMe storage:
+
+- P95 first usable GUI frame within 2.0 seconds across 10 cold starts.
+- P95 folder listing of up to 10,000 entries visible within 1.0 second after navigation, measured across 30 runs on a local volume.
+- P95 recursive name search over up to 100,000 entries settles within 3.0 seconds, measured across 30 runs on a local volume.
+- No user-input event is blocked by filesystem work for more than 100 ms.
+
+These targets must be benchmarked on representative local and mounted volumes before they are accepted as release SLAs. They are goals, not verified claims about v0.1.0.
+
+### 5.3 Security and data privacy
+
+- The app has no sign-in, accounts, network service, synchronization, or production telemetry.
+- Filesystem access runs with the launching user’s OS identity and permissions; the app does not elevate privileges.
+- Listing and search use names and metadata. The app does not index or upload file contents.
+- File opening delegates a path to the OS default application. File Browser does not inspect the opened application’s behavior.
+- GUI file clipboard integration uses file paths; Copy Path writes plain-text paths. The TUI queue is process-local and stores paths only in memory.
+- Favorites, recent locations, and GUI preferences are stored locally in the user’s configuration area. The exact retention and reset UI are not currently specified.
+- Delete actions use the OS trash adapter and require confirmation; permanent deletion is not a user-facing operation.
+
+### 5.4 Offline and edge connectivity
+
+Core browsing and operations are local and do not require an internet connection. Mounted network volumes are accessed through normal OS paths; disconnects, permission changes, and unavailable mounts surface as OS errors. There is no offline synchronization, conflict reconciliation, retry scheduler, or cache invalidation service. The user retries after connectivity returns.
+
+### 5.5 Accessibility and resilience
+
+- TUI core workflows are keyboard-only. The GUI documents shortcuts for core file operations, navigation, selection, and pane controls; focus and selection have visible indicators.
+- The desktop GUI uses egui’s system light/dark palette. Text contrast ratios and screen-reader semantics have not been measured or validated; the current build does not claim WCAG conformance.
+- Release target: map applicable WCAG 2.2 AA criteria to desktop controls, retain visible keyboard focus, provide accessible names/state for custom-painted controls, and validate with Windows Narrator and macOS VoiceOver. Target pointer controls at 24 logical points or larger; touch targets are out of scope.
+- Terminal text sanitization escapes control and bidi-formatting characters for display without changing paths used for filesystem operations.
+- Errors retain the operation context and useful OS text. Partial transfer completion does not imply rollback; completed earlier items remain changed and skipped names are reported.
+
+### 5.6 Technical architecture
+
+- Application language: Rust, edition 2024; declared minimum Rust version 1.89.
+- Desktop UI: eframe/egui; terminal UI: Ratatui/Crossterm; both call the shared `src/core.rs` filesystem layer.
+- Platform adapters isolate GUI detection, file clipboard, local-time formatting, mounted-location discovery, file opening, and trash behavior.
+- Platform-specific capabilities are conditional Rust modules; app-authored product code remains Rust.
+- Linux package production and Linux file-manager clipboard integration are roadmap items, not current release capabilities.
+
+## 6. Analytics, Telemetry & Success Metrics
+
+### North Star and release KPIs
+
+The product is local-first and emits no production analytics. The following are release-validation metrics collected by scripted/manual QA, not transmitted from user devices:
+
+**North Star metric:** successful core file-task completion rate, calculated as completed scripted workflows without a product defect divided by total workflow attempts. The release target is at least 95% across the Windows acceptance matrix.
+
+| Metric | Definition | Release target |
+| --- | --- | --- |
+| Core task completion | Successful completion of browse/open, search, create/rename, copy/move, conflict resolution, and trash workflows in the Windows acceptance matrix. | At least 95% of scripted runs complete without a product defect. |
+| Destructive-operation safety | Confirmed delete and replacement behavior. | 0 items trashed without confirmation; 0 conflicting destinations replaced without an explicit Replace choice. |
+| Mode selection | Correct GUI/TUI selection for each automated session/override case. | 100% of mode-selection cases pass. |
+| TUI restoration | Terminal raw mode and alternate screen restored after normal exit and handled errors. | 100% of supported exit cases pass. |
+| Responsiveness | Results against provisional section 5.2 targets. | All four provisional targets measured and dispositioned before release approval. |
+
+### Event tracking plan
+
+| Event name | Trigger / screen | Parameters / properties | Purpose |
+| --- | --- | --- | --- |
+| None in v0.1 | No production event is emitted. | None; no user identifier or file-path telemetry is collected. | Preserve offline behavior and local-file privacy. |
+
+Future telemetry requires an explicit product decision, opt-in design, data minimization, retention period, and privacy review before implementation.
+
+## 7. Dependencies, Assumptions & Open Questions
+
+### Third-party and OS dependencies
+
+| Dependency | Use | Boundary |
+| --- | --- | --- |
+| eframe/egui | Desktop window and GUI widgets. | Rust dependency; uses platform windowing/rendering backends. |
+| Ratatui/Crossterm | Terminal layout, rendering, and keyboard input. | Requires an interactive terminal for TUI mode. |
+| `trash` | Move items to the platform trash where supported. | OS/distro behavior must be validated on each release target. |
+| `opener` | Launch files with the system default application. | Failure is surfaced; the app does not bundle file viewers. |
+| `dirs` and OS APIs | Home/config paths, Windows CF_HDROP clipboard and platform capability discovery. | Preferences and paths remain under the current user context. |
+| Filesystem and mounted volumes | Listing, metadata, copy/move, symlinks, and search. | Permissions and failure semantics are inherited from the OS/filesystem. |
+
+### Assumptions and constraints
+
+- Windows is the first release target; Linux packages and file-manager clipboard support follow in a separate milestone.
+- macOS Finder conventions are implemented, but the supported macOS version and release validation status need confirmation.
+- Rust-only means Rust-authored application logic; using Rust dependencies and OS APIs is allowed.
+- The app is a local file manager. It is not a synchronization client, server, file editor, or content indexer.
+- Multi-item copy/move is sequential and can partially complete on OS error; no operation history or rollback is provided.
+- Preferences and recent/favorite paths may reveal folder names to anyone with access to the user profile; OS profile permissions are the storage protection.
+
+### Open questions
+
+| ID | Decision needed | Why it matters | Proposed owner / timing |
+| --- | --- | --- | --- |
+| OQ-01 | Declare minimum Windows and macOS versions, and whether macOS is a supported release target or a convention-only build target. | Determines packaging, validation devices, and platform support claims. | Product + release engineering before v1 approval. |
+| OQ-02 | Confirm the reference hardware and storage mix for performance SLAs. | Section 5.2 targets cannot be release gates until the benchmark baseline is agreed. | Product + engineering before performance sign-off. |
+| OQ-03 | Confirm screen-reader acceptance scope and test owners for Narrator/VoiceOver. | AccessKit/native accessibility semantics are not currently validated. | Product + accessibility reviewer before claiming conformance. |
+| OQ-04 | Confirm whether local preference data needs an in-app reset/clear control and a documented retention policy. | Favorites and recent paths persist in the user profile. | Product before wider distribution. |
+| OQ-05 | Confirm fallback behavior when the OS trash facility is unavailable. | Recoverable deletion is a core safety promise; platform support differs. | Engineering + product before each platform release. |
+| OQ-06 | Approve Linux distribution baselines and clipboard interoperability requirements. | Ubuntu/openSUSE versions, packaging formats, and file-manager protocols affect the Linux milestone. | Product + release engineering before Linux milestone kickoff. |
+
+## Appendix A: Detailed Interaction and Acceptance Specification
+
+The following material captures the implemented product behavior and the complete interaction rules used by the PRD above. A capability marked as roadmap work is not a shipped release claim.
+
+### A.1 Platform and launch behavior
 
 | Platform/context | Auto launch | GUI | TUI | Notes |
 | --- | --- | --- | --- | --- |
@@ -78,9 +374,9 @@ Uses keyboard navigation over SSH, a console, or another interactive terminal. N
 
 `--gui` forces GUI mode and fails clearly if no graphical session is detected. `--tui` forces TUI mode and requires interactive stdin and stdout. Passing both modes is an error. `--help` prints usage.
 
-## 5. Shared interaction and filesystem behavior
+### A.2 Shared interaction and filesystem behavior
 
-### 5.1 Navigation and starting location
+#### 5.1 Navigation and starting location
 
 - Start at the user home directory.
 - A directory entry opens through GUI double-click/context action or TUI Enter/Right.
@@ -90,7 +386,7 @@ Uses keyboard navigation over SSH, a console, or another interactive terminal. N
 - Open Containing Folder from a search result or the Details pane navigates to the parent and selects/focuses that item in the listing.
 - The TUI has one current path and no tab/history stack.
 
-### 5.2 Entries and metadata
+#### 5.2 Entries and metadata
 
 The shared entry model carries path, display name, directory flag, symlink flag, size, and optional modified time.
 
@@ -100,11 +396,11 @@ The shared entry model carries path, display name, directory flag, symlink flag,
 - TUI uses compact `[D]`, `[L]`, and `[F]` markers.
 - Modified time uses the local time zone on Windows, macOS, and Linux. The GUI displays month/day/year with a 12-hour clock and AM/PM.
 
-### 5.3 Hidden entries
+#### 5.3 Hidden entries
 
 Hidden entries are excluded by default. On Windows, hidden means the Windows Hidden attribute or a dot-prefixed name. On non-Windows platforms, a dot-prefixed name is hidden. The GUI exposes a `View > Hidden items` toggle; the TUI toggles with `h`.
 
-### 5.4 Sorting
+#### 5.4 Sorting
 
 Directories remain grouped before files. Sort keys are:
 
@@ -115,7 +411,7 @@ Directories remain grouped before files. Sort keys are:
 
 GUI sorting is available from sortable column headings and the Sort menu. Re-selecting the active sort reverses direction; the Sort menu also exposes Descending. The TUI cycles Name → Type → Size → Date modified → Name with `s`, and `S` reverses direction. The active sort and direction appear in the file list title.
 
-### 5.5 Recursive search
+#### 5.5 Recursive search
 
 - Search matches names only; it does not inspect file contents.
 - Search is case-insensitive and searches descendants of the current directory.
@@ -125,7 +421,7 @@ GUI sorting is available from sortable column headings and the Sort menu. Re-sel
 - Results use name ordering and can be selected and acted on like other entries. Their context menu can open the containing folder. In Details layout, a responsive Location column shows each result’s parent directory when space allows. In Icons layout, search cards include the parent directory; truncated search results show their full path on hover in all layouts.
 - The GUI debounces searches while the field changes, cancels stale pending scans, and shows results in the active view. A clear button with the `Esc` hint cancels the current query. The TUI enters search with `/`, updates as text is entered, and exits search input with Enter or Esc.
 
-### 5.6 Copy, move, replace, and skip
+#### 5.6 Copy, move, replace, and skip
 
 - GUI Copy/Cut writes the selected paths to the Windows file clipboard and also retains an app-local fallback queue. Paste prefers file paths from the OS clipboard; if unavailable, it uses the app-local queue. macOS and Linux currently use only the app-local queue for GUI transfers; file-manager clipboard interoperability is not implemented.
 - A folder's context menu offers Paste Into Folder so clipboard items can be transferred there without opening it first.
@@ -146,21 +442,21 @@ GUI sorting is available from sortable column headings and the Sort menu. Re-sel
 - After a successful copy or move into the currently open folder, transferred items are selected when they remain visible.
 - Multi-item operations are sequential rather than batch-atomic. If an OS error occurs after earlier items completed, those earlier changes remain; the current UI reports the operation error but does not provide a per-item history or rollback.
 
-### 5.7 Rename, folder creation, and deletion
+#### 5.7 Rename, folder creation, and deletion
 
 - New folder creates one child directory in the current directory. Names must be a single path component; an empty name or an existing destination is rejected.
 - Rename keeps the item in its current parent. An existing destination name is rejected rather than replaced.
 - Delete means “move to system trash,” not permanent recursive removal through the UI. The GUI asks for confirmation; the TUI requires `y`/`Y` and accepts `n`/Esc to cancel.
 - Permission errors, missing paths, invalid names, and OS integration failures are displayed as operation errors.
 
-### 5.8 Opening files
+#### 5.8 Opening files
 
 - GUI double-click or context-menu Open launches a file through the system default application.
 - The Details pane provides Open for a single file or folder and Copy Path for a single selection; a multi-selection can copy all selected paths as newline-separated text.
 - TUI Enter/Right attempts to launch the selected file through the system opener. If no suitable desktop application exists, the TUI reports that it could not launch it; file management itself remains available.
 - The app does not preview file contents.
 
-### 5.9 End-to-end journeys
+#### 5.9 End-to-end journeys
 
 **Find and open:** Start in Home, navigate using folders/breadcrumbs/history or search names below the current folder, select a result, and open a folder or launch a file. In the TUI, use `/`, type the name fragment, then open the focused result with Enter.
 
@@ -172,9 +468,9 @@ GUI sorting is available from sortable column headings and the Sort menu. Re-sel
 
 **Headless session:** Run `filebrowser --tui` in an interactive terminal. Navigate, search, manage items with the key map, and quit with `q` or Ctrl+C; an active file operation is allowed to finish before exit. Terminal raw mode and the alternate screen are restored on exit.
 
-## 6. Desktop GUI specification
+### A.3 Desktop GUI specification
 
-### 6.1 Window, visual language, and platform conventions
+#### 6.1 Window, visual language, and platform conventions
 
 - Initial window size: 1180 × 760 logical points.
 - Minimum inner window size: 800 × 560 logical points so the main commands and file list remain usable.
@@ -185,7 +481,7 @@ GUI sorting is available from sortable column headings and the Sort menu. Re-sel
 - The left and right side panels are resizable; each splitter shows a horizontal-resize cursor and a tooltip naming its pane. The table columns are resizable; its final column fills remaining width.
 - The window title follows platform convention: Windows/Linux combine the current folder name and `File Browser`; macOS shows the current folder name alone.
 
-### 6.2 Screen regions
+#### 6.2 Screen regions
 
 | Region | Contents and behavior |
 | --- | --- |
@@ -223,7 +519,7 @@ The Details pane is optional. When it is closed, the main table takes the availa
 
 The tab strip, address row, and status row are 38, 42, and 28 points high respectively. The command row takes the height required by its contents and grows when its controls wrap onto additional lines. Default table column widths are 390 points for Name, 175 for Date modified, 145 for Type, and the remainder for Size. Columns can be resized in the current session.
 
-### 6.3 Selection and row targets
+#### 6.3 Selection and row targets
 
 - Hovering any row cell highlights the full row; selected rows keep their selection highlight.
 - A single click anywhere across the full row selects it, including unused width after the final table column through the visible edge of the file pane; hover feedback spans that same width.
@@ -239,7 +535,7 @@ The tab strip, address row, and status row are 38, 42, and 28 points high respec
 - Every item context menu offers Open, Copy Path, Properties/Get Info, Cut, Copy, Rename, and Delete/Move to Trash. Search results also offer Open Containing Folder. Folder entries add Paste Into Folder, Open in New Tab, and Add/Remove from Favorites.
 - Right-clicking empty file-pane space offers New Folder, Paste, Select all visible items, and Refresh, with the active platform’s shortcut shown beside each action.
 
-### 6.4 Dialogs and transient states
+#### 6.4 Dialogs and transient states
 
 - Confirmation and naming dialogs are centered modal surfaces with a dimmed backdrop; clicks cannot activate the file list underneath, and clicking outside cancels the current prompt.
 - **New folder:** focused single-line name entry with Create/Cancel; Enter creates the folder and Esc cancels. After successful creation, the new folder is selected and focused.
@@ -250,7 +546,7 @@ The tab strip, address row, and status row are 38, 42, and 28 points high respec
 - **Empty folder/search:** centered explanation distinguishes an empty folder from no search matches; folder state offers New folder and search state offers Clear search.
 - **Loading/error:** an in-context spinner appears while the first folder listing or search is pending; failed locations show the error in the content area with a retry action that preserves the current path or search query.
 
-### 6.5 GUI shortcuts
+#### 6.5 GUI shortcuts
 
 Unless explicitly written as Control on macOS, `Ctrl` means egui’s platform command modifier: Ctrl on Windows/Linux and Command on macOS.
 
@@ -283,9 +579,9 @@ Unless explicitly written as Control on macOS, `Ctrl` means egui’s platform co
 | F5 | Refresh current folder |
 | Alt+Shift+P (Option+Shift+P on macOS) | Toggle Details pane |
 
-## 7. TUI specification
+### A.4 TUI specification
 
-### 7.1 Screen layout
+#### 7.1 Screen layout
 
 The TUI fills the terminal with three stacked regions:
 
@@ -297,7 +593,7 @@ The UI is keyboard-only. It has no preview or separate details pane. Terminal ra
 
 When the folder is empty, a search has no matches, or a listing/search is still loading or has failed, the list area displays a short status instead of remaining blank. Search results replace the prior visible rows while a new query is in flight.
 
-### 7.2 TUI key map
+#### 7.2 TUI key map
 
 | Key | Action |
 | --- | --- |
@@ -324,14 +620,14 @@ When the folder is empty, a search has no matches, or a listing/search is still 
 
 When no explicit selection exists, copy, cut, rename, and delete use the current cursor item if one exists. With a selection, those actions use the selected set.
 
-### 7.3 TUI prompts
+#### 7.3 TUI prompts
 
 - Path, new-folder, and rename prompts show the insertion point; Left/Right move by grapheme, Home/End move to either end, Backspace/Delete remove one grapheme, Ctrl+A clears the input, Enter commits, and Esc cancels. Prompt instructions wrap into additional footer rows on narrow terminals, and long input keeps the cursor-visible portion in view.
 - Delete shows the item count; `y` confirms, while `n` or Esc cancels.
 - On destination conflicts, `r` replaces, `s` skips conflicting items, and Esc cancels.
 - The footer reports loading/search/operation progress and errors. Resizing is handled by Ratatui’s layout on the next draw.
 
-## 8. Functional requirements and acceptance criteria
+### A.5 Functional requirements and acceptance criteria
 
 | ID | Requirement | Acceptance criteria / evidence |
 | --- | --- | --- |
@@ -378,7 +674,7 @@ When no explicit selection exists, copy, cut, rename, and delete use the current
 | FR-41 | Edit TUI search and prompts at an insertion point. | Left/Right move by grapheme; Home/End, Backspace/Delete, and Ctrl+A operate on the text at the cursor; the cursor remains visible when long inputs are compacted to the terminal width. |
 | FR-42 | Explain why command-row actions are disabled. | Hovering disabled Cut, Copy, Rename, Delete/Move to Trash, or Paste controls explains the missing selection or clipboard requirement; enabled controls retain their action and shortcut hints. |
 
-## 9. Design, accessibility, and resilience requirements
+### A.6 Design, accessibility, and resilience requirements
 
 - All core tasks must be possible without a mouse in the TUI. GUI core actions have keyboard shortcuts and context/menu alternatives where implemented.
 - Selection state must be visible through row highlighting or the TUI marker and cursor highlight. The focused GUI item has an additional outline so it remains distinguishable within a multi-selection.
@@ -389,7 +685,7 @@ When no explicit selection exists, copy, cut, rename, and delete use the current
 - Trash deletion must remain recoverable through the platform trash facility when supported.
 - The current implementation follows the system egui light/dark theme. Localization, custom themes, and screen-reader conformance are not yet specified as shipped capabilities.
 
-## 10. Linux roadmap
+### A.7 Linux roadmap
 
 Linux is the next platform milestone after Windows v1:
 
@@ -400,7 +696,7 @@ Linux is the next platform milestone after Windows v1:
 
 Linux milestone acceptance requires running the package and smoke-test matrix on the target distributions, not just compiling the shared Rust source on Windows.
 
-## 11. Implementation map
+### A.8 Implementation map
 
 | Area | Source |
 | --- | --- |
