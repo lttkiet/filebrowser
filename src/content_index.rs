@@ -9,11 +9,13 @@ const MAX_FILE_BYTES: u64 = 1_048_576;
 const MAX_INDEX_BYTES: u64 = 134_217_728;
 const MAX_INDEX_FILES: usize = 100_000;
 
+#[derive(Clone)]
 struct IndexedFile {
     entry: Entry,
     searchable_text: String,
 }
 
+#[derive(Clone)]
 pub struct ContentIndex {
     root: PathBuf,
     files: Vec<IndexedFile>,
