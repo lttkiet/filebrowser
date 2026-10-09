@@ -1799,24 +1799,28 @@ impl Browser {
                         }
                     }
                 }
-                Event::TextSaved(generation, path, result)
-                    if self.document_dialog.as_ref().is_some_and(|dialog| {
+                Event::TextSaved(generation, path, result) => {
+                    let saved = result.is_ok();
+                    if saved {
+                        self.content_index = None;
+                        self.content_index_generation =
+                            self.content_index_generation.wrapping_add(1);
+                        self.message = "File saved".into();
+                    }
+                    if let Some(dialog) = self.document_dialog.as_mut().filter(|dialog| {
                         dialog.generation == generation && dialog.path == path
-                    }) =>
-                {
-                    if let Some(dialog) = self.document_dialog.as_mut() {
+                    }) {
                         dialog.saving = false;
                         match result {
                             Ok(revision) => {
                                 dialog.revision = Some(revision);
                                 dialog.original_contents = dialog.contents.clone();
-                                self.content_index = None;
-                                self.content_index_generation =
-                                    self.content_index_generation.wrapping_add(1);
-                                self.message = "File saved".into();
                             }
                             Err(error) => dialog.error = Some(error),
                         }
+                    }
+                    if saved {
+                        self.refresh();
                     }
                 }
                 Event::ArchiveListed(generation, path, directory, result)
@@ -1871,12 +1875,13 @@ impl Browser {
                         }
                     }
                 }
-                Event::PropertiesSaved(generation, path, result)
-                    if self.properties_dialog.as_ref().is_some_and(|dialog| {
+                Event::PropertiesSaved(generation, path, result) => {
+                    self.content_index = None;
+                    self.content_index_generation =
+                        self.content_index_generation.wrapping_add(1);
+                    if let Some(dialog) = self.properties_dialog.as_mut().filter(|dialog| {
                         dialog.generation == generation && dialog.path == path
-                    }) =>
-                {
-                    if let Some(dialog) = self.properties_dialog.as_mut() {
+                    }) {
                         dialog.saving = false;
                         match result {
                             Ok(properties) => {
@@ -1893,6 +1898,7 @@ impl Browser {
                             Err(error) => dialog.error = Some(error),
                         }
                     }
+                    self.refresh();
                 }
                 Event::Finished(
                     message,
@@ -5145,7 +5151,11 @@ fn is_image_path(path: &Path) -> bool {
 }
 
 fn decode_preview_image(path: &Path) -> anyhow::Result<(usize, usize, Vec<u8>)> {
-    if std::fs::metadata(path)?.len() > 67_108_864 {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        anyhow::bail!("Image preview is available for regular files only");
+    }
+    if metadata.len() > 67_108_864 {
         anyhow::bail!("Image file is larger than the 64 MiB preview limit");
     }
     let mut reader = image::ImageReader::open(path)?.with_guessed_format()?;

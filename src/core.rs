@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs,
+    hash::{Hash, Hasher},
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
@@ -8,6 +9,7 @@ use std::{
 };
 
 static NEXT_STAGING_ID: AtomicU64 = AtomicU64::new(0);
+const MAX_TEXT_BYTES: u64 = 1_048_576;
 
 #[derive(Clone, Debug)]
 pub struct Entry {
@@ -23,6 +25,7 @@ pub struct Entry {
 pub struct FileRevision {
     pub size: u64,
     pub modified: Option<SystemTime>,
+    fingerprint: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -45,12 +48,41 @@ pub struct ArchiveEntry {
     pub size: u64,
 }
 
+fn normalize_archive_path(path: &str) -> Option<String> {
+    let normalized = path.replace('\\', "/");
+    if normalized.starts_with('/') {
+        return None;
+    }
+    let normalized = normalized.trim_end_matches('/');
+    if normalized.is_empty() {
+        return None;
+    }
+    let mut components = normalized.split('/');
+    let first = components.next()?;
+    if first.as_bytes().get(1) == Some(&b':')
+        || components
+            .clone()
+            .any(|component| component.is_empty() || component == "." || component == "..")
+        || first == "."
+        || first == ".."
+    {
+        return None;
+    }
+    Some(normalized.to_owned())
+}
+
 pub fn list_archive(path: &Path, directory: &str) -> anyhow::Result<Vec<ArchiveEntry>> {
     let mut archive = zip::ZipArchive::new(fs::File::open(path)?)?;
     if archive.len() > 100_000 {
         anyhow::bail!("Archive has too many entries to browse safely");
     }
-    let prefix = directory.trim_matches('/');
+    let normalized_directory = if directory.is_empty() {
+        String::new()
+    } else {
+        normalize_archive_path(directory)
+            .ok_or_else(|| anyhow::anyhow!("Archive folder path is invalid"))?
+    };
+    let prefix = normalized_directory.trim_matches('/');
     let prefix = if prefix.is_empty() {
         String::new()
     } else {
@@ -65,7 +97,9 @@ pub fn list_archive(path: &Path, directory: &str) -> anyhow::Result<Vec<ArchiveE
         let Some(name) = enclosed.to_str() else {
             continue;
         };
-        let name = name.replace('\\', "/");
+        let Some(name) = normalize_archive_path(name) else {
+            continue;
+        };
         let Some(relative) = name.strip_prefix(&prefix) else {
             continue;
         };
@@ -95,19 +129,10 @@ pub fn list_archive(path: &Path, directory: &str) -> anyhow::Result<Vec<ArchiveE
 }
 
 pub fn read_archive_text(path: &Path, member: &str, limit: u64) -> anyhow::Result<String> {
-    let normalized = Path::new(member);
-    if normalized.is_absolute()
-        || normalized.components().any(|component| {
-            matches!(
-                component,
-                std::path::Component::ParentDir | std::path::Component::Prefix(_)
-            )
-        })
-    {
-        anyhow::bail!("Archive member path is invalid");
-    }
+    let member = normalize_archive_path(member)
+        .ok_or_else(|| anyhow::anyhow!("Archive member path is invalid"))?;
     let mut archive = zip::ZipArchive::new(fs::File::open(path)?)?;
-    let file = archive.by_name(member)?;
+    let file = archive.by_name(&member)?;
     if file.is_dir() {
         anyhow::bail!("Cannot preview an archive folder");
     }
@@ -130,29 +155,38 @@ pub fn read_text(path: &Path, limit: u64) -> anyhow::Result<TextFile> {
     if metadata.len() > limit {
         anyhow::bail!("File is larger than the {limit}-byte preview limit");
     }
-    let contents = fs::read_to_string(path)
+    let mut contents = String::new();
+    fs::File::open(path)?
+        .take(limit.saturating_add(1))
+        .read_to_string(&mut contents)
         .map_err(|error| anyhow::anyhow!("File is not readable UTF-8 text: {error}"))?;
+    if contents.len() as u64 > limit {
+        anyhow::bail!("File exceeded the {limit}-byte preview limit while reading");
+    }
     Ok(TextFile {
-        contents,
         revision: FileRevision {
-            size: metadata.len(),
+            size: contents.len() as u64,
             modified: metadata.modified().ok(),
+            fingerprint: content_fingerprint(&contents),
         },
+        contents,
     })
 }
 
 pub fn write_text(path: &Path, revision: FileRevision, contents: &str) -> anyhow::Result<()> {
+    if contents.len() as u64 > MAX_TEXT_BYTES {
+        anyhow::bail!("Edited text exceeds the {MAX_TEXT_BYTES}-byte limit");
+    }
     let metadata = fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         anyhow::bail!("Editing is available for regular files only");
     }
-    let current = FileRevision {
-        size: metadata.len(),
-        modified: metadata.modified().ok(),
-    };
+    let current_file = read_text(path, MAX_TEXT_BYTES)?;
+    let current = current_file.revision;
     if current != revision {
         anyhow::bail!("File changed since it was opened; reload it before saving");
     }
+    drop(current_file);
     let parent = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("File has no parent directory"))?;
@@ -173,6 +207,17 @@ pub fn write_text(path: &Path, revision: FileRevision, contents: &str) -> anyhow
         return Err(error.into());
     }
     drop(output);
+    match read_text(path, MAX_TEXT_BYTES) {
+        Ok(latest) if latest.revision == revision => {}
+        Ok(_) => {
+            let _ = fs::remove_dir_all(&transaction);
+            anyhow::bail!("File changed while saving; reload it before saving");
+        }
+        Err(error) => {
+            let _ = fs::remove_dir_all(&transaction);
+            return Err(error);
+        }
+    }
     if let Err(error) = fs::rename(path, &backup) {
         let _ = fs::remove_dir_all(&transaction);
         return Err(error.into());
@@ -185,15 +230,20 @@ pub fn write_text(path: &Path, revision: FileRevision, contents: &str) -> anyhow
         let _ = fs::remove_dir_all(&transaction);
         return Err(error.into());
     }
-    fs::remove_file(backup)?;
-    fs::remove_dir(transaction)?;
+    let _ = fs::remove_file(&backup).or_else(|_| {
+        let mut permissions = fs::metadata(&backup)?.permissions();
+        permissions.set_readonly(false);
+        fs::set_permissions(&backup, permissions)?;
+        fs::remove_file(&backup)
+    });
+    let _ = fs::remove_dir(transaction);
     Ok(())
 }
 
 pub fn file_properties(path: &Path) -> anyhow::Result<FileProperties> {
     let metadata = fs::symlink_metadata(path)?;
-    if metadata.file_type().is_symlink() {
-        anyhow::bail!("Editing properties of symbolic links is not supported");
+    if metadata.file_type().is_symlink() || !(metadata.is_file() || metadata.is_dir()) {
+        anyhow::bail!("Properties are available for regular files and folders only");
     }
     Ok(FileProperties {
         read_only: metadata.permissions().readonly(),
@@ -203,8 +253,8 @@ pub fn file_properties(path: &Path) -> anyhow::Result<FileProperties> {
 
 pub fn set_file_properties(path: &Path, read_only: bool, modified: SystemTime) -> anyhow::Result<()> {
     let metadata = fs::symlink_metadata(path)?;
-    if metadata.file_type().is_symlink() {
-        anyhow::bail!("Editing properties of symbolic links is not supported");
+    if metadata.file_type().is_symlink() || !(metadata.is_file() || metadata.is_dir()) {
+        anyhow::bail!("Properties are available for regular files and folders only");
     }
     let was_read_only = metadata.permissions().readonly();
     if was_read_only {
@@ -212,14 +262,45 @@ pub fn set_file_properties(path: &Path, read_only: bool, modified: SystemTime) -
         permissions.set_readonly(false);
         fs::set_permissions(path, permissions)?;
     }
-    let update_time = (|| -> std::io::Result<()> {
-        fs::File::open(path)?.set_times(fs::FileTimes::new().set_modified(modified))
-    })();
+    let update_time = set_modified_time(path, modified);
+    if let Err(error) = update_time {
+        if was_read_only {
+            let mut permissions = metadata.permissions();
+            permissions.set_readonly(true);
+            if let Err(restore_error) = fs::set_permissions(path, permissions) {
+                anyhow::bail!("Could not update modified time ({error}) or restore read-only state ({restore_error})");
+            }
+        }
+        return Err(error.into());
+    }
     let mut permissions = metadata.permissions();
     permissions.set_readonly(read_only);
     fs::set_permissions(path, permissions)?;
-    update_time?;
     Ok(())
+}
+
+fn content_fingerprint(contents: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    contents.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn set_modified_time(path: &Path, modified: SystemTime) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        let file = fs::OpenOptions::new()
+            .access_mode(FILE_WRITE_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path)?;
+        file.set_times(fs::FileTimes::new().set_modified(modified))
+    }
+    #[cfg(not(windows))]
+    {
+        fs::File::open(path)?.set_times(fs::FileTimes::new().set_modified(modified))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

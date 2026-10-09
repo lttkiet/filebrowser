@@ -1,5 +1,6 @@
 use std::{
     fs,
+    io::Read,
     path::{Path, PathBuf},
 };
 
@@ -58,17 +59,25 @@ impl ContentIndex {
                     continue;
                 }
                 if metadata.len() > MAX_FILE_BYTES
-                    || index.indexed_bytes.saturating_add(metadata.len()) > MAX_INDEX_BYTES
                     || index.files.len() >= MAX_INDEX_FILES
                 {
                     index.skipped_files += 1;
                     continue;
                 }
-                let Ok(text) = fs::read_to_string(&path) else {
+                let mut text = String::new();
+                let read = fs::File::open(&path)
+                    .and_then(|file| file.take(MAX_FILE_BYTES + 1).read_to_string(&mut text));
+                if read.is_err() || text.len() as u64 > MAX_FILE_BYTES {
                     index.skipped_files += 1;
                     continue;
-                };
-                index.indexed_bytes = index.indexed_bytes.saturating_add(metadata.len());
+                }
+                let searchable_text = text.to_lowercase();
+                let normalized_bytes = searchable_text.len() as u64;
+                if index.indexed_bytes.saturating_add(normalized_bytes) > MAX_INDEX_BYTES {
+                    index.skipped_files += 1;
+                    continue;
+                }
+                index.indexed_bytes += normalized_bytes;
                 index.files.push(IndexedFile {
                     entry: Entry {
                         path,
@@ -78,7 +87,7 @@ impl ContentIndex {
                         size: metadata.len(),
                         modified: metadata.modified().ok(),
                     },
-                    searchable_text: text.to_lowercase(),
+                    searchable_text,
                 });
             }
         }

@@ -40,6 +40,7 @@ enum Event {
     TextSaved(u64, PathBuf, Result<core::FileRevision, String>),
     ArchiveListed(u64, PathBuf, String, Result<Vec<core::ArchiveEntry>, String>),
     ArchiveTextLoaded(u64, PathBuf, String, Result<String, String>),
+    PropertiesLoaded(PathBuf, Result<core::FileProperties, String>),
     Indexed(u64, PathBuf, Result<crate::content_index::ContentIndex, String>),
     Finished(String, Option<Vec<PathBuf>>),
 }
@@ -425,17 +426,13 @@ impl App {
         let Some(path) = self.selected_paths().first().cloned() else {
             return;
         };
-        match core::file_properties(&path) {
-            Ok(properties) => {
-                self.prompt_text = properties.modified.map_or_else(String::new, |modified| {
-                    let local: chrono::DateTime<chrono::Local> = modified.into();
-                    local.format("%Y-%m-%d %H:%M:%S").to_string()
-                });
-                self.edit_cursor = self.prompt_text.len();
-                self.prompt = Some(Prompt::Properties(path, properties.read_only));
-            }
-            Err(error) => self.message = format!("Properties error: {error}"),
-        }
+        self.active_operations = self.active_operations.saturating_add(1);
+        self.message = "Loading properties…".into();
+        let tx = self.tx.clone();
+        thread::spawn(move || {
+            let result = core::file_properties(&path).map_err(|error| error.to_string());
+            let _ = tx.send(Event::PropertiesLoaded(path, result));
+        });
     }
 
     fn next_search_generation(&mut self) -> u64 {
@@ -546,6 +543,26 @@ impl App {
                     }
                     Err(error) => self.message = format!("Index error: {error}"),
                 },
+                Event::PropertiesLoaded(path, result) => {
+                    self.active_operations = self.active_operations.saturating_sub(1);
+                    match result {
+                        Ok(properties) => {
+                            self.prompt_text = properties.modified.map_or_else(
+                                String::new,
+                                |modified| {
+                                    let local: chrono::DateTime<chrono::Local> = modified.into();
+                                    local.format("%Y-%m-%d %H:%M:%S").to_string()
+                                },
+                            );
+                            self.edit_cursor = self.prompt_text.len();
+                            self.prompt = Some(Prompt::Properties(path, properties.read_only));
+                        }
+                        Err(error) => self.message = format!("Properties error: {error}"),
+                    }
+                    if self.quit_when_idle && self.active_operations == 0 {
+                        self.quit = true;
+                    }
+                }
                 Event::TextLoaded(generation, path, result)
                     if self.document.as_ref().is_some_and(|document| {
                         document.generation == generation
@@ -605,6 +622,7 @@ impl App {
                 }
                 Event::TextSaved(generation, path, result) => {
                     self.active_operations = self.active_operations.saturating_sub(1);
+                    let mut refresh = false;
                     if let Some(document) = self.document.as_mut().filter(|document| {
                         document.generation == generation && document.path == path
                     }) {
@@ -616,9 +634,13 @@ impl App {
                                 self.content_index = None;
                                 self.index_generation = self.index_generation.wrapping_add(1);
                                 self.message = "File saved".into();
+                                refresh = true;
                             }
                             Err(error) => document.error = Some(error),
                         }
+                    }
+                    if refresh {
+                        self.refresh();
                     }
                     if self.quit_when_idle && self.active_operations == 0 {
                         self.quit = true;
