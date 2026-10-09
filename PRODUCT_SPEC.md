@@ -6,7 +6,7 @@
 | --- | --- |
 | Product | File Browser |
 | Document | Product requirements and interaction specification |
-| Document version | 0.2.1 |
+| Document version | 0.2.2 |
 | Product release baseline | 0.1.0 |
 | Status | Draft — implementation and platform validation in review |
 | Target release | Windows v1; Linux Ubuntu/openSUSE milestone follows |
@@ -18,6 +18,7 @@
 
 | Version | Date | Author | Change |
 | --- | --- | --- | --- |
+| 0.2.2 | 2026-10-10 | AI PM Agent | Split combined functional groups into 12 feature specifications with independent workflows and UI state matrices. |
 | 0.2.1 | 2026-10-10 | AI PM Agent | Tightened measurable goals, motion/timeout behavior, technical targets, persona literacy, and release KPIs after PRD audit. |
 | 0.2.0 | 2026-10-10 | AI PM Agent | Reorganized as a complete PRD; added feature journeys, UI state matrices, non-functional targets, telemetry policy, and open questions. |
 | 0.1.0 | 2026-10-10 | AI PM Agent | Initial product and interaction specification. |
@@ -34,7 +35,7 @@ Desktop users need a predictable way to browse, find, and move local files, whil
 
 ### Goals (in scope)
 
-- Provide all eight feature modules in section 4 in the interface(s) appropriate to the capability; each module has at least one Given/When/Then acceptance scenario.
+- Provide all 12 feature modules in section 4 in the interface(s) appropriate to the capability; each module has at least one Given/When/Then acceptance scenario.
 - Keep filesystem work off interactive event loops; block user-input handling for no more than 100 ms during supported operations.
 - Reach at least 95% successful workflow completion across the Windows release acceptance matrix, with 100% correct mode-selection and terminal-restoration cases.
 - Start at Home and choose the GUI for 100% of graphical-session cases; otherwise choose the TUI for 100% of interactive-terminal cases.
@@ -75,7 +76,7 @@ Desktop users need a predictable way to browse, find, and move local files, whil
 
 ## 4. Functional Specifications
 
-The feature modules below define user stories, end-to-end flows, Gherkin acceptance criteria, and observable UI states. Every matrix covers default, empty, loading/progress, validation error, external dependency failure, and timeout behavior. File Browser has no application server; server failure is not applicable. Network-mounted volumes and OS integrations use the external-failure state. The desktop GUI uses a spinner for pending work and has no view-transition animation; the TUI uses status text only. The detailed interaction rules, complete shortcut maps, and FR-01–FR-42 acceptance catalog are in Appendix A.
+The 12 feature modules below define user stories, end-to-end flows, Gherkin acceptance criteria, and observable UI states. Every matrix covers default, empty, loading/progress, validation error, external dependency failure, and timeout behavior. File Browser has no application server; server failure is not applicable. Network-mounted volumes and OS integrations use the external-failure state. The desktop GUI uses a spinner for pending work and has no view-transition animation; the TUI uses status text only. The detailed interaction rules, complete shortcut maps, and FR-01–FR-42 acceptance catalog are in Appendix A.
 
 ### 4.1 Launch and mode selection
 
@@ -99,49 +100,93 @@ The feature modules below define user stories, end-to-end flows, Gherkin accepta
 | OS/session failure | Forced GUI without a graphical session or forced TUI without interactive stdin/stdout exits with the corresponding actionable error. |
 | Timeout | Session detection is synchronous; v0.1 has no startup timeout or automatic retry. |
 
-### 4.2 Navigation, tabs, and location access
+### 4.2 Navigation and location access
 
-**User story:** As a desktop user, I want to move between folders using familiar history, breadcrumbs, tabs, and pinned locations; as a terminal user, I want parent/path navigation without a pointer.
+**User story:** As a desktop user, I want to move between folders using familiar history, breadcrumbs, and pinned locations; as a terminal user, I want parent/path navigation without a pointer.
 
-**Workflow:** Start at Home; browse through the sidebar, address path, history, or file list; open folders in the current or a new tab; return to parents/history; pin frequently used folders. In the TUI, use Enter/Right, Backspace/Left, and `g` for a path.
+**Workflow:** Start at Home; browse through the sidebar, address path, history, or file list; return to parents/history; pin frequently used folders. In the TUI, use Enter/Right, Backspace/Left, and `g` for a path.
 
 **Acceptance criteria:**
 
-- Given a visible folder, when the user opens it, then the active location changes and the tab’s scroll and selection state are updated consistently.
+- Given a visible folder, when the user opens it, then the active location changes and the current view returns to that folder.
 - Given a path in the address editor, when the user submits a valid path, then the app navigates there; when it does not exist or is inaccessible, then it reports the OS error and offers retry where specified.
 - Given a folder opened from search, when the user chooses Open Containing Folder, then its parent opens and the result is selected when still present.
+- Given a user navigates to a parent folder, when the previous child remains visible, then GUI Up selects and focuses that child.
 
 | UI state | Required behavior |
 | --- | --- |
-| Default | Show current path, navigation history, tabs, and available Home/Recent/Favorites/Locations entries. |
+| Default | Show current path, navigation history, and available Home/Recent/Favorites/Locations entries. |
 | Empty | Empty folders retain navigation controls and show a create-folder action. |
 | Loading/progress | Show a loading state while the requested folder is listed; keep other controls responsive. |
 | Validation error | Reject malformed/unavailable paths with the OS error; do not silently switch to a different folder. |
 | Network/OS failure | A disconnected mount or inaccessible folder remains identifiable; report the error and keep the current path available for retry. |
 | Timeout | No application-level deadline is defined; keep progress visible and the interface responsive until the OS call returns; do not retry automatically. |
 
-### 4.3 Browse, sort, select, and inspect
+### 4.3 Tabs and sidebar locations
 
-**User story:** As a desktop or terminal user, I want to scan folder contents, sort them, and select one or many items without losing track of focus.
+**User story:** As a desktop user, I want to keep several locations open and return to frequent or recent folders without repeating navigation.
 
-**Workflow:** Browse Details/List/Icons in the GUI or the terminal list; change sort key/direction; select with click, keyboard, or TUI Space; inspect metadata and copy paths in the GUI Details pane.
+**Workflow:** Open a tab at the current or selected folder; activate, reorder, close, duplicate, or reopen tabs; navigate from Home, Recent Locations, Favorites, or mounted Locations; pin, reorder, or remove Favorites.
+
+**Acceptance criteria:**
+
+- Given two open tabs, when the user switches tabs, then that tab restores its query, view mode, sort, scroll, selection, and focus when the items remain available.
+- Given a missing recent or favorite path, when the sidebar renders, then the path remains listed as Unavailable so it can be removed.
+- Given the only tab is closed, when close completes, then that tab returns to Home; closed tabs can be reopened up to the ten-tab history limit.
+
+| UI state | Required behavior |
+| --- | --- |
+| Default | Show the active tab and each sidebar section’s stored expanded/collapsed state. |
+| Empty | Hide the Recent Locations section when it has no entries; keep Home, Favorites, and Locations available. |
+| Loading/progress | Show a tab’s loading state while its folder is restored; do not block switching to another tab. |
+| Validation error | Reject attempts to pin or reorder a path that is not an existing folder; keep the prior Favorites order. |
+| Network/OS failure | Keep unavailable locations labeled and removable; report failures to persist Favorites or recent locations. |
+| Timeout | No application-level deadline is defined; keep progress visible and the interface responsive until the OS call returns; do not retry automatically. |
+
+### 4.4 Browse, view modes, and sorting
+
+**User story:** As a desktop or terminal user, I want to scan folder contents and sort them in a layout that fits the task.
+
+**Workflow:** Browse Details/List/Icons in the GUI or the terminal list; choose a sort key and direction; open visible file/folder entries.
 
 **Acceptance criteria:**
 
 - Given a populated folder, when the user changes a sort key, then directories remain grouped before files and the active key/direction remains visible.
-- Given a Details/List row, when the user clicks anywhere through the visible pane edge, then it selects; a press without pointer movement remains a click, while click-and-move starts a drag.
-- Given multiple selected items, when the user invokes a selection action, then it operates on the selected set; the focused item remains visually distinct.
+- Given a narrow window or terminal, when the listing adapts, then names remain readable and metadata is progressively hidden before the name column.
+- Given an empty folder or search, when the listing is rendered, then the screen distinguishes the empty folder from no matching results.
 
 | UI state | Required behavior |
 | --- | --- |
-| Default | Show name and available metadata; selected and focused items have distinct visual feedback. |
-| Empty | Distinguish an empty folder from a search with no matches and offer the relevant next action. |
-| Loading/progress | Preserve a visible pending state while listing or search results are being produced. |
-| Validation error | If an item disappears or an operation cannot access it, keep the error visible and retain remaining valid selections. |
-| Network/OS failure | Show inaccessible entry status where available; do not follow directory symlinks during recursive search. |
+| Default | Show names and available metadata; indicate the active sort key and direction. |
+| Empty | Show “This folder is empty” with New folder, or “No results found” with Clear search. |
+| Loading/progress | Show folder listing or search progress without blocking input. |
+| Validation error | If an entry disappears during refresh, omit it and keep remaining entries sorted. |
+| Network/OS failure | Show the unreadable-folder or entry-metadata error with Retry; do not report a partial listing as complete. |
 | Timeout | No application-level deadline is defined; keep progress visible and the interface responsive until the OS call returns; do not retry automatically. |
 
-### 4.4 Recursive name search
+### 4.5 Selection and keyboard commands
+
+**User story:** As a desktop or terminal user, I want to select one or more items and operate on the intended selection with mouse or keyboard.
+
+**Workflow:** Select a row/card or move focus with the keyboard; extend/toggle selection; invoke an action; clear selection or return focus using the documented Escape behavior.
+
+**Acceptance criteria:**
+
+- Given a Details/List row, when the user clicks anywhere through the visible pane edge, then it selects; a press without pointer movement remains a click, while click-and-move starts a drag.
+- Given a selected row, when the user Ctrl/Command-clicks it, then its selection toggles and it becomes the range anchor; Shift-click extends from that anchor.
+- Given a multi-selection, when an action is invoked, then it operates on the selected set and the focused item remains visually distinct.
+- Given the TUI has no explicit selection, when Copy/Cut/Rename/Delete is invoked, then the current cursor item is used when one exists.
+
+| UI state | Required behavior |
+| --- | --- |
+| Default | Show selection and focus independently using row/card highlighting, focus outline, or TUI marker/reverse highlighting. |
+| Empty | Disable selection-dependent actions; TUI actions without a selection use the current cursor item when possible. |
+| Loading/progress | Keep the current selection visible while listing/search work runs; retain items that remain visible after completion. |
+| Validation error | Reject Rename unless exactly one item is selected; explain required selection on disabled command controls. |
+| Network/OS failure | If an item disappears or becomes inaccessible, retain valid selections and report the failed operation. |
+| Timeout | Selection changes are synchronous and have no timeout; filesystem actions use the timeout behavior in their operation module. |
+
+### 4.6 Recursive name search
 
 **User story:** As a user, I want to find descendants by name without opening each folder or scanning file contents.
 
@@ -162,49 +207,91 @@ The feature modules below define user stories, end-to-end flows, Gherkin accepta
 | Network/OS failure | Skip inaccessible descendants; report failure to open the search root with retry. |
 | Timeout | No application-level deadline is defined; keep progress visible and the interface responsive until the OS call returns; do not retry automatically. |
 
-### 4.5 Create, rename, and move to trash
+### 4.7 Create and rename
 
-**User story:** As a user, I want to create folders, rename items, and delete recoverably with clear confirmation and error feedback.
+**User story:** As a user, I want to create folders and rename items without accidentally replacing an existing destination.
 
-**Workflow:** Start the requested action; enter a single path-component name where applicable; review destructive deletion details; confirm or cancel; select the created/renamed item when it remains visible.
+**Workflow:** Choose New Folder or Rename; enter one path-component name; submit; correct validation errors; after success, return to the listing with the created/renamed item selected when visible.
 
 **Acceptance criteria:**
 
-- Given an empty valid folder name, when submitted, then creation is rejected and the user can correct it.
-- Given an existing destination name, when rename or creation is attempted, then the existing item remains unchanged and an error is shown.
-- Given a trash request, when confirmed, then the OS trash adapter is invoked; when canceled, then no item is moved.
+- Given an empty or multi-component name, when submitted, then the action is rejected and the prompt remains available for correction.
+- Given an existing destination name, when create or rename is attempted, then the existing item remains unchanged and the error is shown.
+- Given a valid name, when the filesystem operation succeeds, then the new or renamed item is selected if it remains visible.
 
 | UI state | Required behavior |
 | --- | --- |
-| Default | New Folder and Rename prompts focus the input; rename selects the basename while preserving a recognized extension. |
-| Empty | No selection disables selection-dependent toolbar actions; the TUI uses the cursor item fallback when no explicit selection exists. |
-| Loading/progress | Run filesystem mutations off the UI loop and show the operation label. |
+| Default | Focus the name field; on rename, select the basename while preserving a recognized extension. |
+| Empty | New Folder remains available in an empty folder; Rename is disabled until exactly one item is selected. |
+| Loading/progress | Run mutation off the UI loop and show “Creating folder…” or “Renaming…”. |
 | Validation error | Reject empty, multi-component, invalid, or existing destination names; preserve the source item. |
-| Network/OS failure | Show the operation and OS error; do not claim success if trash or rename fails. |
-| Timeout | No application-level deadline is defined; keep progress visible and the interface responsive until the OS call returns; do not retry automatically. |
+| Network/OS failure | Show the operation and OS error; keep the original item when rename fails. |
+| Timeout | No operation deadline is configured; keep the prompt result pending and the interface responsive until the OS call returns. |
 
-### 4.6 Copy, move, clipboard, and drag-and-drop
+### 4.8 Move to trash
 
-**User story:** As a user, I want to copy or move one or more items to a destination and resolve name conflicts before replacement.
+**User story:** As a user, I want to remove selected items recoverably and confirm exactly what will be moved.
 
-**Workflow:** Select items; copy/cut and paste, drag onto a GUI destination, or use the TUI internal queue; choose Replace, Skip, or Cancel when conflicts exist; review completion, skipped names, or errors.
+**Workflow:** Select one or more items; invoke Delete/Move to Trash; review item names and count; confirm or cancel; inspect the completion or error status.
 
 **Acceptance criteria:**
 
-- Given a same-volume internal GUI drop, when the user releases over a folder, then the default action is Move; cross-volume drops default to Copy.
-- Given a transfer conflict, when the user selects Skip, then non-conflicting items transfer and skipped names are reported; Cancel starts no transfer after preflight.
-- Given an invalid drop destination, when the user releases, then no transfer occurs and the UI reports the valid destination types.
+- Given a trash request, when the confirmation is shown, then it lists the affected items and the platform trash action.
+- Given a confirmation, when the user accepts, then the OS trash adapter is invoked; when canceled, then no item is moved.
+- Given trash integration failure, when the OS returns an error, then the UI reports it and does not claim success.
 
 | UI state | Required behavior |
 | --- | --- |
-| Default | Paste controls reflect file-path availability; cut-pending items remain visibly dimmed until a complete move. |
-| Empty | Paste is disabled and explains that the clipboard has no file paths. |
-| Loading/progress | Show source count/name and destination; keep UI event processing active. |
-| Validation error | Reject self/descendant drops and show Replace/Skip/Cancel for conflicts. |
-| Network/OS failure | Report the failing operation and OS error; preserve retry queue after failed or partial moves; disclose that multi-item operations are not atomic. |
-| Timeout | No application-level deadline is defined; keep progress visible and the interface responsive until the OS call returns; do not retry automatically. |
+| Default | Confirmation names “Move to Recycle Bin?” on Windows and “Move to Trash?” on macOS/Linux and lists affected items. |
+| Empty | Disable Delete/Move to Trash when no selection or TUI cursor item exists. |
+| Loading/progress | Show “Moving to <trash name>…” while the OS integration runs. |
+| Validation error | Cancel without change when no valid source paths remain. |
+| Network/OS failure | Keep the source item visible when trash fails and show the OS error. |
+| Timeout | No operation deadline is configured; keep progress visible and allow the OS call to finish; v0.1 has no cancellation action. |
 
-### 4.7 Open files and use the Details pane
+### 4.9 Copy, move, clipboard, and conflicts
+
+**User story:** As a user, I want to copy or move items using the platform clipboard or the TUI queue and resolve destination conflicts deliberately.
+
+**Workflow:** Select items; Copy/Cut; navigate to a destination; Paste or Paste Into Folder; choose Replace, Skip, or Cancel on conflict; inspect completion, skipped names, or error.
+
+**Acceptance criteria:**
+
+- Given Windows GUI file paths in the system clipboard, when Paste is invoked, then those paths are used; otherwise the app-local queue is the fallback.
+- Given the TUI, when Copy/Cut/Paste is invoked, then it uses the app-local queue without requiring a GUI clipboard.
+- Given a transfer conflict, when the user selects Skip, then non-conflicting items transfer and skipped names are reported; Cancel stops transfer after preflight.
+
+| UI state | Required behavior |
+| --- | --- |
+| Default | Paste controls enable only when file paths are available; cut-pending items remain visibly dimmed until a complete move. |
+| Empty | Disable Paste and explain “No file paths in the clipboard.” |
+| Loading/progress | Show source name/count and destination; keep UI event processing active. |
+| Validation error | Show Replace/Skip/Cancel; reject self/descendant moves and retain prior destinations unless Replace is selected. |
+| Network/OS failure | Report the failing operation and OS error; preserve retry queue after failed or partial moves; disclose that multi-item operations are not atomic. |
+| Timeout | No transfer deadline is configured; keep progress and interface responsive until the OS call returns; do not retry automatically. |
+
+### 4.10 GUI drag-and-drop
+
+**User story:** As a desktop user, I want to transfer files by dragging only after I press and move, with clear feedback about the destination and action.
+
+**Workflow:** Press a selected or unselected row/card; move the pointer to a folder row, icon card, sidebar location, tab, or empty pane; inspect the destination outline and Move/Copy cursor; release to transfer.
+
+**Acceptance criteria:**
+
+- Given a simple click on an item, when the pointer does not move, then the item is selected and no drag begins.
+- Given a same-volume internal drop, when released on a folder, then the default action is Move; cross-volume drops default to Copy; Ctrl/Option forces Copy.
+- Given an external file drop, when released over a directory target, then the files are copied there; an invalid file-row target is rejected with no transfer.
+
+| UI state | Required behavior |
+| --- | --- |
+| Default | Keep the standard pointer over items; no drag cursor appears on hover alone. |
+| Empty | The empty file pane accepts drops into the current folder and shows a destination outline. |
+| Loading/progress | After release, show transfer source/count and destination in the status row. |
+| Validation error | Reject file-row, self-folder, and descendant-folder destinations; show Not Allowed and an explanatory status. |
+| Network/OS failure | Report transfer errors and retain cut queue state when the move is incomplete. |
+| Timeout | No drag-transfer deadline is configured; after release, retain progress until the OS transfer returns. |
+
+### 4.11 Open files and use the Details pane
 
 **User story:** As a desktop user, I want to inspect an item’s metadata and open it with its usual application; as a terminal user, I want the app to report when no opener is available.
 
@@ -223,9 +310,9 @@ The feature modules below define user stories, end-to-end flows, Gherkin accepta
 | Loading/progress | Show search-pending state and count while results are being produced. |
 | Validation error | If the item is no longer available, keep the pane consistent with the remaining selection and show the error. |
 | Network/OS failure | Report default-app launch or path access errors; do not preview or modify file contents. |
-| Timeout | No application-level deadline is defined; keep progress visible and the interface responsive until the OS call returns; do not retry automatically. |
+| Timeout | No application-level deadline is defined; keep the interface responsive while the OS opener returns. |
 
-### 4.8 Headless TUI interaction
+### 4.12 Headless TUI interaction
 
 **User story:** As a remote or headless user, I want to complete file-management tasks with keyboard-only controls and leave my terminal restored after exit.
 
