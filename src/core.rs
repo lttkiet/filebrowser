@@ -1,5 +1,6 @@
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::SystemTime,
@@ -15,6 +16,124 @@ pub struct Entry {
     pub is_symlink: bool,
     pub size: u64,
     pub modified: Option<SystemTime>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileRevision {
+    pub size: u64,
+    pub modified: Option<SystemTime>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TextFile {
+    pub contents: String,
+    pub revision: FileRevision,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct FileProperties {
+    pub read_only: bool,
+    pub modified: Option<SystemTime>,
+}
+
+pub fn read_text(path: &Path, limit: u64) -> anyhow::Result<TextFile> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        anyhow::bail!("Preview is available for regular files only");
+    }
+    if metadata.len() > limit {
+        anyhow::bail!("File is larger than the {limit}-byte preview limit");
+    }
+    let contents = fs::read_to_string(path)
+        .map_err(|error| anyhow::anyhow!("File is not readable UTF-8 text: {error}"))?;
+    Ok(TextFile {
+        contents,
+        revision: FileRevision {
+            size: metadata.len(),
+            modified: metadata.modified().ok(),
+        },
+    })
+}
+
+pub fn write_text(path: &Path, revision: FileRevision, contents: &str) -> anyhow::Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        anyhow::bail!("Editing is available for regular files only");
+    }
+    let current = FileRevision {
+        size: metadata.len(),
+        modified: metadata.modified().ok(),
+    };
+    if current != revision {
+        anyhow::bail!("File changed since it was opened; reload it before saving");
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("File has no parent directory"))?;
+    let transaction = create_staging_directory(parent)?;
+    let staged = transaction.join("new-file");
+    let backup = transaction.join("previous-file");
+    let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&staged)?;
+    if let Err(error) = output.write_all(contents.as_bytes()) {
+        let _ = fs::remove_dir_all(&transaction);
+        return Err(error.into());
+    }
+    if let Err(error) = output.set_permissions(metadata.permissions()) {
+        drop(output);
+        let _ = fs::remove_dir_all(&transaction);
+        return Err(error.into());
+    }
+    drop(output);
+    if let Err(error) = fs::rename(path, &backup) {
+        let _ = fs::remove_dir_all(&transaction);
+        return Err(error.into());
+    }
+    if let Err(error) = fs::rename(&staged, path) {
+        if let Err(restore_error) = fs::rename(&backup, path) {
+            let _ = fs::remove_dir_all(&transaction);
+            anyhow::bail!("Could not save file ({error}) or restore the original ({restore_error})");
+        }
+        let _ = fs::remove_dir_all(&transaction);
+        return Err(error.into());
+    }
+    fs::remove_file(backup)?;
+    fs::remove_dir(transaction)?;
+    Ok(())
+}
+
+pub fn file_properties(path: &Path) -> anyhow::Result<FileProperties> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() {
+        anyhow::bail!("Editing properties of symbolic links is not supported");
+    }
+    Ok(FileProperties {
+        read_only: metadata.permissions().readonly(),
+        modified: metadata.modified().ok(),
+    })
+}
+
+pub fn set_file_properties(path: &Path, read_only: bool, modified: SystemTime) -> anyhow::Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() {
+        anyhow::bail!("Editing properties of symbolic links is not supported");
+    }
+    let was_read_only = metadata.permissions().readonly();
+    if was_read_only {
+        let mut permissions = metadata.permissions();
+        permissions.set_readonly(false);
+        fs::set_permissions(path, permissions)?;
+    }
+    let update_time = (|| -> std::io::Result<()> {
+        fs::File::open(path)?.set_times(fs::FileTimes::new().set_modified(modified))
+    })();
+    let mut permissions = metadata.permissions();
+    permissions.set_readonly(read_only);
+    fs::set_permissions(path, permissions)?;
+    update_time?;
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -245,7 +364,7 @@ fn validate_name(name: &str) -> anyhow::Result<&str> {
     Ok(name)
 }
 
-fn is_hidden(metadata: &fs::Metadata, name: &str) -> bool {
+pub(crate) fn is_hidden(metadata: &fs::Metadata, name: &str) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;

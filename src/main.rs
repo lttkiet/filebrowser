@@ -1,4 +1,5 @@
 mod core;
+mod content_index;
 mod display;
 mod gui;
 mod platform;

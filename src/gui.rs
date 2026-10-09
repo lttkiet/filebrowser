@@ -22,6 +22,11 @@ use crate::{
 enum Event {
     Listed(Option<u64>, PathBuf, Result<Vec<Entry>, String>),
     Searched(u64, String, Result<Vec<Entry>, String>),
+    TextLoaded(u64, PathBuf, Result<core::TextFile, String>),
+    TextSaved(u64, PathBuf, Result<core::FileRevision, String>),
+    PropertiesLoaded(u64, PathBuf, Result<core::FileProperties, String>),
+    PropertiesSaved(u64, PathBuf, Result<core::FileProperties, String>),
+    Indexed(u64, PathBuf, Result<crate::content_index::ContentIndex, String>),
     Finished(
         String,
         Option<Vec<PathBuf>>,
@@ -29,6 +34,34 @@ enum Event {
         HashSet<PathBuf>,
         Option<PathBuf>,
     ),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DocumentMode {
+    Preview,
+    Edit,
+}
+
+struct DocumentDialog {
+    generation: u64,
+    path: PathBuf,
+    mode: DocumentMode,
+    contents: String,
+    original_contents: String,
+    revision: Option<core::FileRevision>,
+    loading: bool,
+    saving: bool,
+    error: Option<String>,
+}
+
+struct PropertiesDialog {
+    generation: u64,
+    path: PathBuf,
+    read_only: bool,
+    modified: String,
+    loading: bool,
+    saving: bool,
+    error: Option<String>,
 }
 
 enum Confirm {
@@ -154,6 +187,12 @@ struct Browser {
     search_results: Option<Arc<Vec<Entry>>>,
     search_generation: u64,
     search_epoch: Arc<AtomicU64>,
+    content_index: Option<Arc<crate::content_index::ContentIndex>>,
+    content_search: bool,
+    content_index_generation: u64,
+    document_dialog: Option<DocumentDialog>,
+    properties_dialog: Option<PropertiesDialog>,
+    dialog_generation: u64,
     listing_generation: u64,
     query: String,
     type_select_query: String,
@@ -232,6 +271,12 @@ impl Browser {
             search_results: None,
             search_generation: 0,
             search_epoch: Arc::new(AtomicU64::new(0)),
+            content_index: None,
+            content_search: false,
+            content_index_generation: 0,
+            document_dialog: None,
+            properties_dialog: None,
+            dialog_generation: 0,
             listing_generation: 0,
             query: String::new(),
             type_select_query: String::new(),
@@ -671,6 +716,10 @@ impl Browser {
         let root = self.current.clone();
         let query = self.query.clone();
         let show_hidden = self.show_hidden;
+        let content_search = self.content_search;
+        let content_index = self.content_index.clone();
+        let sort = self.sort;
+        let sort_descending = self.sort_descending;
         let tx = self.events_tx.clone();
         let q = query.clone();
         let search_epoch = self.search_epoch.clone();
@@ -680,8 +729,117 @@ impl Browser {
             if search_epoch.load(Ordering::Relaxed) != generation {
                 return;
             }
-            let result = core::search(&root, &query, show_hidden).map_err(|e| e.to_string());
+            let result = if content_search {
+                content_index
+                    .as_ref()
+                    .filter(|index| index.root() == root)
+                    .map(|index| index.search(&query, sort, sort_descending))
+                    .ok_or_else(|| "Index this folder before searching its contents".to_owned())
+            } else {
+                core::search(&root, &query, show_hidden).map_err(|error| error.to_string())
+            };
             let _ = tx.send(Event::Searched(generation, q, result));
+        });
+    }
+
+    fn index_current_folder(&mut self) {
+        self.content_index_generation = self.content_index_generation.wrapping_add(1);
+        let generation = self.content_index_generation;
+        let root = self.current.clone();
+        let show_hidden = self.show_hidden;
+        let tx = self.events_tx.clone();
+        self.message = "Indexing text files…".into();
+        thread::spawn(move || {
+            let result = crate::content_index::ContentIndex::build(&root, show_hidden)
+                .map_err(|error| error.to_string());
+            let _ = tx.send(Event::Indexed(generation, root, result));
+        });
+    }
+
+    fn open_document(&mut self, path: PathBuf, mode: DocumentMode) {
+        self.dialog_generation = self.dialog_generation.wrapping_add(1);
+        let generation = self.dialog_generation;
+        self.document_dialog = Some(DocumentDialog {
+            generation,
+            path: path.clone(),
+            mode,
+            contents: String::new(),
+            original_contents: String::new(),
+            revision: None,
+            loading: true,
+            saving: false,
+            error: None,
+        });
+        let tx = self.events_tx.clone();
+        thread::spawn(move || {
+            let result = core::read_text(&path, 1_048_576).map_err(|error| error.to_string());
+            let _ = tx.send(Event::TextLoaded(generation, path, result));
+        });
+    }
+
+    fn save_document(&mut self) {
+        let Some(dialog) = self.document_dialog.as_mut() else {
+            return;
+        };
+        let Some(revision) = dialog.revision else {
+            return;
+        };
+        let generation = dialog.generation;
+        let path = dialog.path.clone();
+        let contents = dialog.contents.clone();
+        dialog.saving = true;
+        dialog.error = None;
+        let tx = self.events_tx.clone();
+        thread::spawn(move || {
+            let result = core::write_text(&path, revision, &contents)
+                .and_then(|_| core::read_text(&path, 1_048_576).map(|file| file.revision))
+                .map_err(|error| error.to_string());
+            let _ = tx.send(Event::TextSaved(generation, path, result));
+        });
+    }
+
+    fn open_properties(&mut self, path: PathBuf) {
+        self.dialog_generation = self.dialog_generation.wrapping_add(1);
+        let generation = self.dialog_generation;
+        self.properties_dialog = Some(PropertiesDialog {
+            generation,
+            path: path.clone(),
+            read_only: false,
+            modified: String::new(),
+            loading: true,
+            saving: false,
+            error: None,
+        });
+        let tx = self.events_tx.clone();
+        thread::spawn(move || {
+            let result = core::file_properties(&path).map_err(|error| error.to_string());
+            let _ = tx.send(Event::PropertiesLoaded(generation, path, result));
+        });
+    }
+
+    fn save_properties(&mut self) {
+        let Some(dialog) = self.properties_dialog.as_mut() else {
+            return;
+        };
+        let parsed = chrono::NaiveDateTime::parse_from_str(&dialog.modified, "%Y-%m-%d %H:%M:%S")
+            .ok()
+            .and_then(|value| value.and_local_timezone(chrono::Local).single());
+        let Some(modified) = parsed else {
+            dialog.error = Some("Enter local time as YYYY-MM-DD HH:MM:SS".into());
+            return;
+        };
+        let generation = dialog.generation;
+        let path = dialog.path.clone();
+        let read_only = dialog.read_only;
+        let modified = modified.into();
+        dialog.saving = true;
+        dialog.error = None;
+        let tx = self.events_tx.clone();
+        thread::spawn(move || {
+            let result = core::set_file_properties(&path, read_only, modified)
+                .and_then(|_| core::file_properties(&path))
+                .map_err(|error| error.to_string());
+            let _ = tx.send(Event::PropertiesSaved(generation, path, result));
         });
     }
 
@@ -1512,6 +1670,97 @@ impl Browser {
                         self.message = format!("Search error: {error}");
                     }
                 },
+                Event::Indexed(generation, path, result)
+                    if generation == self.content_index_generation && path == self.current =>
+                match result {
+                    Ok(index) => {
+                        self.message = index.summary();
+                        self.content_index = Some(Arc::new(index));
+                        if self.content_search && !self.query.trim().is_empty() {
+                            self.search();
+                        }
+                    }
+                    Err(error) => self.message = format!("Index error: {error}"),
+                },
+                Event::TextLoaded(generation, path, result)
+                    if self.document_dialog.as_ref().is_some_and(|dialog| {
+                        dialog.generation == generation && dialog.path == path
+                    }) =>
+                {
+                    if let Some(dialog) = self.document_dialog.as_mut() {
+                        dialog.loading = false;
+                        match result {
+                            Ok(file) => {
+                                dialog.contents = file.contents;
+                                dialog.original_contents = dialog.contents.clone();
+                                dialog.revision = Some(file.revision);
+                            }
+                            Err(error) => dialog.error = Some(error),
+                        }
+                    }
+                }
+                Event::TextSaved(generation, path, result)
+                    if self.document_dialog.as_ref().is_some_and(|dialog| {
+                        dialog.generation == generation && dialog.path == path
+                    }) =>
+                {
+                    if let Some(dialog) = self.document_dialog.as_mut() {
+                        dialog.saving = false;
+                        match result {
+                            Ok(revision) => {
+                                dialog.revision = Some(revision);
+                                dialog.original_contents = dialog.contents.clone();
+                                self.message = "File saved".into();
+                            }
+                            Err(error) => dialog.error = Some(error),
+                        }
+                    }
+                }
+                Event::PropertiesLoaded(generation, path, result)
+                    if self.properties_dialog.as_ref().is_some_and(|dialog| {
+                        dialog.generation == generation && dialog.path == path
+                    }) =>
+                {
+                    if let Some(dialog) = self.properties_dialog.as_mut() {
+                        dialog.loading = false;
+                        match result {
+                            Ok(properties) => {
+                                dialog.read_only = properties.read_only;
+                                dialog.modified = properties.modified.map_or_else(
+                                    String::new,
+                                    |value| {
+                                        let local: chrono::DateTime<chrono::Local> = value.into();
+                                        local.format("%Y-%m-%d %H:%M:%S").to_string()
+                                    },
+                                );
+                            }
+                            Err(error) => dialog.error = Some(error),
+                        }
+                    }
+                }
+                Event::PropertiesSaved(generation, path, result)
+                    if self.properties_dialog.as_ref().is_some_and(|dialog| {
+                        dialog.generation == generation && dialog.path == path
+                    }) =>
+                {
+                    if let Some(dialog) = self.properties_dialog.as_mut() {
+                        dialog.saving = false;
+                        match result {
+                            Ok(properties) => {
+                                dialog.read_only = properties.read_only;
+                                dialog.modified = properties.modified.map_or_else(
+                                    String::new,
+                                    |value| {
+                                        let local: chrono::DateTime<chrono::Local> = value.into();
+                                        local.format("%Y-%m-%d %H:%M:%S").to_string()
+                                    },
+                                );
+                                self.message = "Properties updated".into();
+                            }
+                            Err(error) => dialog.error = Some(error),
+                        }
+                    }
+                }
                 Event::Finished(
                     message,
                     clear_after,
@@ -1792,6 +2041,7 @@ impl eframe::App for Browser {
         });
 
         self.show_confirmation(ctx);
+        self.show_feature_dialogs(ctx);
         if let Some(size) = ctx.input(|input| input.viewport().inner_rect.map(|rect| rect.size())) {
             self.window_width = size.x.round().clamp(800.0, 4096.0) as u16;
             self.window_height = size.y.round().clamp(560.0, 2160.0) as u16;
@@ -2276,7 +2526,7 @@ impl Browser {
                     let compact = ui.available_width() < 720.0;
                     let navigation_button_size = if compact { 24.0 } else { 30.0 };
                     let minimum_path_width = if compact { 48.0 } else { 180.0 };
-                    let reserved_search_width = if compact { 190.0 } else { 330.0 };
+                    let reserved_search_width = if compact { 220.0 } else { 420.0 };
                     let minimum_search_width = if compact { 100.0 } else { 180.0 };
                     let tab = &self.tabs[self.active_tab];
                     let can_back = tab.history_index > 0;
@@ -2515,6 +2765,26 @@ impl Browser {
                     if search.changed() {
                         self.search();
                     }
+                    ui.menu_button("⋯", |ui| {
+                        if ui
+                            .checkbox(&mut self.content_search, "Search indexed contents")
+                            .changed()
+                        {
+                            self.search();
+                        }
+                        if ui.button("Index this folder’s text files").clicked() {
+                            self.index_current_folder();
+                            ui.close();
+                        }
+                        if let Some(index) = self
+                            .content_index
+                            .as_ref()
+                            .filter(|index| index.root() == self.current)
+                        {
+                            ui.separator();
+                            ui.label(index.summary());
+                        }
+                    });
                     if !self.query.is_empty()
                         && ui
                             .small_button("×")
@@ -2903,10 +3173,21 @@ impl Browser {
                             if ui.button("Open folder").clicked() {
                                 self.navigate(entry.path.clone());
                             }
-                        } else if ui.button("Open").clicked()
-                            && let Err(error) = opener::open(&entry.path)
-                        {
-                            self.message = format!("Could not open file: {error}");
+                        } else {
+                            if ui.button("Preview Text").clicked() {
+                                self.open_document(entry.path.clone(), DocumentMode::Preview);
+                            }
+                            if ui.button("Edit Text").clicked() {
+                                self.open_document(entry.path.clone(), DocumentMode::Edit);
+                            }
+                            if ui.button("Open").clicked()
+                                && let Err(error) = opener::open(&entry.path)
+                            {
+                                self.message = format!("Could not open file: {error}");
+                            }
+                        }
+                        if ui.button("Edit Properties").clicked() {
+                            self.open_properties(entry.path.clone());
                         }
                         if ui.button("Copy Path").clicked() {
                             let ctx = ui.ctx().clone();
@@ -3009,6 +3290,17 @@ impl Browser {
                     self.navigate_selecting(parent.to_path_buf(), entry.path.clone());
                     ui.close();
                 }
+                if !entry.is_dir {
+                    ui.separator();
+                    if ui.button("Preview Text").clicked() {
+                        self.open_document(entry.path.clone(), DocumentMode::Preview);
+                        ui.close();
+                    }
+                    if ui.button("Edit Text").clicked() {
+                        self.open_document(entry.path.clone(), DocumentMode::Edit);
+                        ui.close();
+                    }
+                }
                 if ui.button("Copy Path").clicked() {
                     let ctx = ui.ctx().clone();
                     self.copy_paths_to_text(&ctx, vec![entry.path.clone()]);
@@ -3027,11 +3319,11 @@ impl Browser {
                             "Alt+Enter"
                         }),
                     )
-                    .on_hover_text(if cfg!(target_os = "macos") {
-                        "Show item details (Command+I)"
-                    } else {
-                        "Show item details (Alt+Enter)"
-                })
+                        .on_hover_text(if cfg!(target_os = "macos") {
+                            "Show item details (Command+I)"
+                        } else {
+                            "Show item details (Alt+Enter)"
+                        })
                 .clicked()
                 {
                     if !self.selected.contains(&entry.path) {
@@ -3042,6 +3334,20 @@ impl Browser {
                     self.focus_path = Some(entry.path.clone());
                     self.details_open = true;
                     ui.close();
+                }
+                if ui.button("Edit Properties…").clicked() {
+                    self.open_properties(entry.path.clone());
+                    ui.close();
+                }
+                if !entry.is_dir {
+                    if ui.button("Preview Text").clicked() {
+                        self.open_document(entry.path.clone(), DocumentMode::Preview);
+                        ui.close();
+                    }
+                    if ui.button("Edit Text").clicked() {
+                        self.open_document(entry.path.clone(), DocumentMode::Edit);
+                        ui.close();
+                    }
                 }
                 if entry.is_dir {
                     ui.separator();
@@ -4288,6 +4594,151 @@ impl Browser {
                     self.rename_focus_pending = false;
                 }
             }
+        }
+    }
+
+    fn show_feature_dialogs(&mut self, ctx: &egui::Context) {
+        let mut save_document = false;
+        let mut reload_document = None;
+        if let Some(mut dialog) = self.document_dialog.take() {
+            let mut open = true;
+            let mut discard = false;
+            let mut close_requested = false;
+            let dirty = dialog.mode == DocumentMode::Edit
+                && dialog.contents != dialog.original_contents;
+            egui::Window::new(match dialog.mode {
+                DocumentMode::Preview => "Preview",
+                DocumentMode::Edit => "Edit text file",
+            })
+            .id(egui::Id::new("text-document-dialog"))
+            .open(&mut open)
+            .default_size([680.0, 520.0])
+            .resizable(true)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.label(dialog.path.display().to_string());
+                ui.separator();
+                if dialog.loading {
+                    ui.spinner();
+                    ui.label("Loading text file…");
+                } else {
+                    if let Some(error) = &dialog.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                        if ui.button("Reload from disk").clicked() {
+                            reload_document = Some((dialog.path.clone(), dialog.mode));
+                        }
+                    }
+                    egui::ScrollArea::both()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.add_sized(
+                                ui.available_size(),
+                                egui::TextEdit::multiline(&mut dialog.contents)
+                                    .font(egui::TextStyle::Monospace)
+                                    .interactive(
+                                        dialog.mode == DocumentMode::Edit && !dialog.saving,
+                                    )
+                                    .desired_width(f32::INFINITY),
+                            );
+                        });
+                }
+                if dialog.mode == DocumentMode::Edit && dirty {
+                    ui.label("Unsaved changes");
+                }
+                ui.horizontal(|ui| {
+                    if dialog.mode == DocumentMode::Edit {
+                        if ui
+                            .add_enabled(
+                                dirty && !dialog.loading && !dialog.saving,
+                                egui::Button::new(if dialog.saving { "Saving…" } else { "Save" }),
+                            )
+                            .clicked()
+                        {
+                            save_document = true;
+                        }
+                        if dirty {
+                            if ui.button("Discard").clicked() && !dialog.saving {
+                                discard = true;
+                                close_requested = true;
+                            }
+                        } else if ui.button("Close").clicked() {
+                            close_requested = true;
+                        }
+                    } else if ui.button("Close").clicked() {
+                        close_requested = true;
+                    }
+                });
+            });
+            if close_requested {
+                open = false;
+            }
+            if dirty && !open && !dialog.saving && !discard {
+                open = true;
+                dialog.error = Some("Save or discard the unsaved edits before closing".into());
+            }
+            if open {
+                self.document_dialog = Some(dialog);
+            }
+        }
+        if save_document {
+            self.save_document();
+        }
+        if let Some((path, mode)) = reload_document {
+            self.open_document(path, mode);
+        }
+
+        let mut save_properties = false;
+        if let Some(mut dialog) = self.properties_dialog.take() {
+            let mut open = true;
+            let mut close_requested = false;
+            egui::Window::new("Edit properties")
+                .id(egui::Id::new("file-properties-dialog"))
+                .open(&mut open)
+                .default_width(420.0)
+                .resizable(false)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.label(dialog.path.display().to_string());
+                    ui.separator();
+                    if dialog.loading {
+                        ui.spinner();
+                        ui.label("Loading properties…");
+                    } else {
+                        ui.checkbox(&mut dialog.read_only, "Read-only");
+                        ui.label("Modified (local time)");
+                        ui.add_enabled(
+                            !dialog.saving,
+                            egui::TextEdit::singleline(&mut dialog.modified)
+                                .hint_text("YYYY-MM-DD HH:MM:SS"),
+                        );
+                    }
+                    if let Some(error) = &dialog.error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(
+                                !dialog.loading && !dialog.saving,
+                                egui::Button::new(if dialog.saving { "Saving…" } else { "Save" }),
+                            )
+                            .clicked()
+                        {
+                            save_properties = true;
+                        }
+                        if ui.button("Close").clicked() {
+                            close_requested = true;
+                        }
+                    });
+                });
+            if close_requested {
+                open = false;
+            }
+            if open {
+                self.properties_dialog = Some(dialog);
+            }
+        }
+        if save_properties {
+            self.save_properties();
         }
     }
 
