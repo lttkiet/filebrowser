@@ -472,13 +472,35 @@ impl App {
                     } else {
                         Style::default().fg(Color::Cyan)
                     };
+                    let icon_color = if entry.is_symlink {
+                        Some(Color::Magenta)
+                    } else if entry.is_dir {
+                        Some(if cfg!(target_os = "macos") {
+                            Color::LightBlue
+                        } else {
+                            Color::Yellow
+                        })
+                    } else {
+                        None
+                    };
+                    let icon_style = if let Some(color) = icon_color {
+                        Style::default().fg(color)
+                    } else {
+                        Style::default()
+                    };
+                    let icon_style = if cut_pending {
+                        icon_style.add_modifier(Modifier::DIM)
+                    } else {
+                        icon_style
+                    };
                     let item_style = if cut_pending {
                         Style::default().add_modifier(Modifier::DIM)
                     } else {
                         Style::default()
                     };
                     ListItem::new(Line::from(vec![
-                        Span::styled(format!("{marker} {icon} "), marker_style),
+                        Span::styled(format!("{marker} "), marker_style),
+                        Span::styled(format!("{icon} "), icon_style),
                         Span::styled(name, item_style),
                         Span::raw(" ".repeat(padding + if show_size { 2 } else { 0 })),
                         if show_size {
