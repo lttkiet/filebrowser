@@ -1762,11 +1762,8 @@ impl eframe::App for Browser {
                         egui::Button::new("Paste")
                             .right_text(format!("{}+V", command_modifier())),
                     )
-                    .on_hover_text(if self.clipboard_available {
-                        format!("Paste into this folder ({}+V)", command_modifier())
-                    } else {
-                        "No file paths in the clipboard".into()
-                    })
+                    .on_hover_text(format!("Paste into this folder ({}+V)", command_modifier()))
+                    .on_disabled_hover_text("No file paths in the clipboard")
                     .clicked()
                 {
                     self.paste();
@@ -2133,6 +2130,10 @@ impl Browser {
                             "Cut selected items ({}+X)",
                             command_modifier()
                         ))
+                        .on_disabled_hover_text(format!(
+                            "Select one or more items to cut ({}+X)",
+                            command_modifier()
+                        ))
                         .clicked()
                     {
                         self.copy_or_cut(true);
@@ -2143,17 +2144,18 @@ impl Browser {
                             "Copy selected items ({}+C)",
                             command_modifier()
                         ))
+                        .on_disabled_hover_text(format!(
+                            "Select one or more items to copy ({}+C)",
+                            command_modifier()
+                        ))
                         .clicked()
                     {
                         self.copy_or_cut(false);
                     }
                     if ui
                         .add_enabled(self.clipboard_available, egui::Button::new("Paste"))
-                        .on_hover_text(if self.clipboard_available {
-                            format!("Paste into this folder ({}+V)", command_modifier())
-                        } else {
-                            "No file paths in the clipboard".into()
-                        })
+                        .on_hover_text(format!("Paste into this folder ({}+V)", command_modifier()))
+                        .on_disabled_hover_text("No file paths in the clipboard")
                         .clicked()
                     {
                         self.paste();
@@ -2166,6 +2168,7 @@ impl Browser {
                         } else {
                             "Select one item to rename (F2)"
                         })
+                        .on_disabled_hover_text("Select one item to rename (F2)")
                         .clicked()
                     {
                         self.begin_rename();
@@ -2177,6 +2180,11 @@ impl Browser {
                         )
                         .on_hover_text(format!(
                             "Move selected items to the {} ({})",
+                            platform::trash_name(),
+                            delete_key_hint(),
+                        ))
+                        .on_disabled_hover_text(format!(
+                            "Select one or more items to move to the {} ({})",
                             platform::trash_name(),
                             delete_key_hint(),
                         ))
@@ -3047,6 +3055,7 @@ impl Browser {
                         } else {
                             "No file paths in the clipboard"
                         })
+                        .on_disabled_hover_text("No file paths in the clipboard")
                         .clicked()
                     {
                         self.paste_to(entry.path.clone());
