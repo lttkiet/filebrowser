@@ -18,7 +18,7 @@ The desktop layout combines Explorer-style tabs and sortable Details columns wit
 
 In list and Details views, the whole row is clickable, including its metadata columns. Single-click an item to select it and double-click to open it. Dragging starts only after pressing and holding an item and moving it; hovering over a name does not start a drag. Drag selected items onto folders, sidebar locations, or empty folder space to move them, or drop files from another app into a folder. These pointer interactions are available in the desktop GUI; the TUI uses its keyboard copy/cut/paste queue.
 
-Preview and edit UTF-8 text files up to 1 MiB. The desktop GUI also previews BMP, GIF, JPEG, PNG, and WebP images. Index a folder tree to search eligible file contents; the index stays in memory and is cleared after app-managed file changes. ZIP files can be browsed without extraction, with UTF-8 text previews for archive members. Properties let you change read-only state and modified time.
+Preview and edit UTF-8 text files up to 1 MiB. The desktop GUI also previews BMP, GIF, JPEG, PNG, and WebP images. Index a folder tree to search eligible file contents; the index stays in memory and is cleared after app-managed file changes or when hidden-item visibility changes. ZIP files can be browsed without extraction, with UTF-8 text previews for archive members. Properties let you change read-only state and modified time.
 
 ## TUI keys
 

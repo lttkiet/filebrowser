@@ -364,7 +364,7 @@ The 17 feature modules below define user stories, end-to-end flows, Gherkin acce
 
 **User story:** As a user, I want to index the text in a folder tree and search it so I can find files by words in their contents.
 
-**Workflow:** Choose Index this folder’s text files in the GUI or press `i` in the TUI; wait for indexing; enable content search (`Search indexed contents` in the GUI or `I` in the TUI); enter a query. Reindex after external changes or when switching to another folder tree.
+**Workflow:** Choose Index this folder’s text files in the GUI or press `i` in the TUI; wait for indexing; enable content search (`Search indexed contents` in the GUI or `I` in the TUI); enter a query. Reindex after external changes, changing hidden-item visibility, or switching to another folder tree.
 
 **Acceptance criteria:**
 
@@ -373,6 +373,7 @@ The 17 feature modules below define user stories, end-to-end flows, Gherkin acce
 - Given files larger than 1 MiB, unreadable files, binary/non-UTF-8 files, or resource caps reached, when indexing completes, then those files are skipped and the summary reports indexed and skipped counts.
 - Given content search is enabled without an index for the current folder, when a query is entered, then the app instructs the user to index that folder first.
 - Given application-managed content changes, when a text file is saved or an operation mutates the listing, then the prior index is discarded and must be rebuilt before content search.
+- Given hidden-item visibility changes after indexing, when content search is requested, then the prior index is discarded and the user must rebuild it using the new visibility setting.
 
 | UI state | Required behavior |
 | --- | --- |

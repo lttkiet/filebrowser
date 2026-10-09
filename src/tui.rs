@@ -311,6 +311,11 @@ impl App {
         });
     }
 
+    fn invalidate_content_index(&mut self) {
+        self.content_index = None;
+        self.index_generation = self.index_generation.wrapping_add(1);
+    }
+
     fn open_document(&mut self, path: PathBuf, mode: DocumentMode) {
         self.document_generation = self.document_generation.wrapping_add(1);
         let generation = self.document_generation;
@@ -1198,6 +1203,7 @@ impl App {
             KeyCode::Char(' ') => self.toggle_selection(),
             KeyCode::Char('h') => {
                 self.show_hidden = !self.show_hidden;
+                self.invalidate_content_index();
                 self.refresh();
             }
             KeyCode::F(5) => self.refresh(),

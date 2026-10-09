@@ -773,6 +773,11 @@ impl Browser {
         });
     }
 
+    fn invalidate_content_index(&mut self) {
+        self.content_index = None;
+        self.content_index_generation = self.content_index_generation.wrapping_add(1);
+    }
+
     fn open_document(&mut self, path: PathBuf, mode: DocumentMode) {
         self.dialog_generation = self.dialog_generation.wrapping_add(1);
         let generation = self.dialog_generation;
@@ -1326,6 +1331,7 @@ impl Browser {
                 };
                 if toggle_hidden_pressed {
                     self.show_hidden = !self.show_hidden;
+                    self.invalidate_content_index();
                     self.refresh();
                 }
                 let plain_typing = !input.modifiers.command
@@ -2623,6 +2629,7 @@ impl Browser {
                             ))
                             .changed();
                         if hidden_changed {
+                            self.invalidate_content_index();
                             self.refresh();
                         }
                         ui.checkbox(&mut self.navigation_open, "Navigation pane");
