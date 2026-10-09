@@ -6,7 +6,7 @@
 | --- | --- |
 | Product | File Browser |
 | Document | Product requirements and interaction specification |
-| Document version | 0.2.0 |
+| Document version | 0.2.1 |
 | Product release baseline | 0.1.0 |
 | Status | Draft — implementation and platform validation in review |
 | Target release | Windows v1; Linux Ubuntu/openSUSE milestone follows |
@@ -18,6 +18,7 @@
 
 | Version | Date | Author | Change |
 | --- | --- | --- | --- |
+| 0.2.1 | 2026-10-10 | AI PM Agent | Tightened measurable goals, motion/timeout behavior, technical targets, persona literacy, and release KPIs after PRD audit. |
 | 0.2.0 | 2026-10-10 | AI PM Agent | Reorganized as a complete PRD; added feature journeys, UI state matrices, non-functional targets, telemetry policy, and open questions. |
 | 0.1.0 | 2026-10-10 | AI PM Agent | Initial product and interaction specification. |
 
@@ -33,12 +34,13 @@ Desktop users need a predictable way to browse, find, and move local files, whil
 
 ### Goals (in scope)
 
-- Provide the core browse, search, select, create, rename, copy, move, open, and trash workflows in the desktop GUI and the TUI where a graphical integration is not required.
-- Keep filesystem work off interactive event loops and expose progress, errors, conflicts, and partial outcomes in the interface that started the operation.
-- Match common Windows Explorer and macOS Finder conventions for navigation, selection, sorting, tabs, and shortcuts while retaining platform-specific labels and capabilities.
-- Start from Home and automatically choose the GUI when a graphical session is available, otherwise the TUI when an interactive terminal is attached.
-- Deliver Windows v1; define Ubuntu `.deb` and openSUSE `.rpm` as the next Linux packaging targets.
-- Keep app-authored application code in Rust and keep files under the current OS user’s filesystem permissions.
+- Provide all eight feature modules in section 4 in the interface(s) appropriate to the capability; each module has at least one Given/When/Then acceptance scenario.
+- Keep filesystem work off interactive event loops; block user-input handling for no more than 100 ms during supported operations.
+- Reach at least 95% successful workflow completion across the Windows release acceptance matrix, with 100% correct mode-selection and terminal-restoration cases.
+- Start at Home and choose the GUI for 100% of graphical-session cases; otherwise choose the TUI for 100% of interactive-terminal cases.
+- Match 100% of the documented Windows/macOS labels and shortcut behaviors in the acceptance catalog.
+- Deliver Windows v1 after its acceptance gates pass; define Ubuntu `.deb` and openSUSE `.rpm` as the next Linux packaging targets.
+- Keep 100% of app-authored application code in Rust and enforce file access through the current OS user’s permissions.
 
 ### Non-goals (out of scope)
 
@@ -52,28 +54,28 @@ Desktop users need a predictable way to browse, find, and move local files, whil
 
 ### Persona 1: Desktop file organizer
 
-- **Role/context:** Windows or macOS user who manages personal or work folders with a mouse and keyboard; comfortable with standard file-manager conventions.
+- **Role/context:** Windows or macOS user with intermediate computer literacy who manages personal or work folders with a mouse and keyboard; comfortable with standard file-manager conventions.
 - **Motivation:** Find and organize files without changing their default applications or risking accidental replacement/deletion.
 - **Pain points:** Deep folder navigation, repeated destinations, unclear transfer conflicts, and losing selection context after sorting or navigation.
 - **Success:** Can locate an item, inspect its path, and complete a copy/move/rename/trash action with visible confirmation and recoverable deletion.
 
 ### Persona 2: Headless and remote operator
 
-- **Role/context:** User connected over SSH or working in a console without a graphical session.
+- **Role/context:** Technically proficient user connected over SSH or working in a console without a graphical session; comfortable with keyboard shortcuts and terminal navigation.
 - **Motivation:** Perform routine file management using only the keyboard and without launching another app.
 - **Pain points:** GUI-only tools are unavailable; shell commands make selection, conflict handling, and safe trash behavior cumbersome.
 - **Success:** Can navigate, search names, select multiple entries, transfer files, resolve conflicts, and restore the terminal after exit.
 
 ### Persona 3: Keyboard-first user
 
-- **Role/context:** User who prefers or requires keyboard operation, including users who benefit from visible focus and predictable shortcuts.
+- **Role/context:** User with beginner-to-advanced computer literacy who prefers or requires keyboard operation, including users who benefit from visible focus and predictable shortcuts.
 - **Motivation:** Complete file tasks without relying on pointer precision.
 - **Pain points:** Hidden shortcut behavior, focus loss, and selection state that is difficult to distinguish.
 - **Success:** GUI core tasks are available from documented shortcuts and visible focus; all core TUI tasks are keyboard-accessible. Screen-reader conformance remains an open validation requirement, not a shipped claim.
 
 ## 4. Functional Specifications
 
-The feature modules below define user stories, end-to-end flows, Gherkin acceptance criteria, and observable UI states. The detailed interaction rules, complete shortcut maps, and FR-01–FR-42 acceptance catalog are in Appendix A.
+The feature modules below define user stories, end-to-end flows, Gherkin acceptance criteria, and observable UI states. Every matrix covers default, empty, loading/progress, validation error, external dependency failure, and timeout behavior. File Browser has no application server; server failure is not applicable. Network-mounted volumes and OS integrations use the external-failure state. The desktop GUI uses a spinner for pending work and has no view-transition animation; the TUI uses status text only. The detailed interaction rules, complete shortcut maps, and FR-01–FR-42 acceptance catalog are in Appendix A.
 
 ### 4.1 Launch and mode selection
 
@@ -257,6 +259,8 @@ The feature modules below define user stories, end-to-end flows, Gherkin accepta
 
 Minimum supported OS versions are not declared in the manifest and remain an open release decision. Touch input is not a supported target; desktop pointer targets are sized in logical points.
 
+This is a native desktop/terminal application; a browser compatibility matrix and mobile battery budget are not applicable.
+
 ### 5.2 Performance and responsiveness
 
 **Current implementation requirements:** directory listing, recursive search, and mutations execute on worker threads; GUI rows/cards are virtualized to visible content; the TUI polls input while work runs. Multi-item operations are sequential and are not batch-atomic.
@@ -267,18 +271,21 @@ Minimum supported OS versions are not declared in the manifest and remain an ope
 - P95 folder listing of up to 10,000 entries visible within 1.0 second after navigation, measured across 30 runs on a local volume.
 - P95 recursive name search over up to 100,000 entries settles within 3.0 seconds, measured across 30 runs on a local volume.
 - No user-input event is blocked by filesystem work for more than 100 ms.
+- Process working set remains at or below 512 MiB during the 100,000-entry search scenario.
 
-These targets must be benchmarked on representative local and mounted volumes before they are accepted as release SLAs. They are goals, not verified claims about v0.1.0.
+The working-set target is a provisional resource budget. Battery consumption is not budgeted because mobile devices are out of scope. These targets must be benchmarked on representative local and mounted volumes before they are accepted as release SLAs. They are goals, not verified claims about v0.1.0.
 
 ### 5.3 Security and data privacy
 
 - The app has no sign-in, accounts, network service, synchronization, or production telemetry.
+- OAuth, passkeys, MFA, sessions, and role-based access control do not apply; the local OS user and filesystem ACLs are the authorization boundary.
 - Filesystem access runs with the launching user’s OS identity and permissions; the app does not elevate privileges.
 - Listing and search use names and metadata. The app does not index or upload file contents.
 - File opening delegates a path to the OS default application. File Browser does not inspect the opened application’s behavior.
 - GUI file clipboard integration uses file paths; Copy Path writes plain-text paths. The TUI queue is process-local and stores paths only in memory.
 - Favorites, recent locations, and GUI preferences are stored locally in the user’s configuration area. The exact retention and reset UI are not currently specified.
 - Delete actions use the OS trash adapter and require confirmation; permanent deletion is not a user-facing operation.
+- No GDPR, CCPA, SOC 2, or other compliance certification is claimed. Legal applicability depends on distribution and jurisdiction and remains subject to review before a commercial release.
 
 ### 5.4 Offline and edge connectivity
 
@@ -312,9 +319,8 @@ The product is local-first and emits no production analytics. The following are 
 | --- | --- | --- |
 | Core task completion | Successful completion of browse/open, search, create/rename, copy/move, conflict resolution, and trash workflows in the Windows acceptance matrix. | At least 95% of scripted runs complete without a product defect. |
 | Destructive-operation safety | Confirmed delete and replacement behavior. | 0 items trashed without confirmation; 0 conflicting destinations replaced without an explicit Replace choice. |
-| Mode selection | Correct GUI/TUI selection for each automated session/override case. | 100% of mode-selection cases pass. |
-| TUI restoration | Terminal raw mode and alternate screen restored after normal exit and handled errors. | 100% of supported exit cases pass. |
-| Responsiveness | Results against provisional section 5.2 targets. | All four provisional targets measured and dispositioned before release approval. |
+| Session and terminal reliability | Correct GUI/TUI mode selection plus raw-mode/alternate-screen restoration after TUI exit. | 100% of supported mode-selection and terminal-exit cases pass. |
+| Responsiveness | Results against provisional section 5.2 targets. | All five provisional targets measured and dispositioned before release approval. |
 
 ### Event tracking plan
 
