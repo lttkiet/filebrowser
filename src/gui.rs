@@ -23,6 +23,7 @@ enum Event {
     Listed(Option<u64>, PathBuf, Result<Vec<Entry>, String>),
     Searched(u64, String, Result<Vec<Entry>, String>),
     TextLoaded(u64, PathBuf, Result<core::TextFile, String>),
+    ImageLoaded(u64, PathBuf, Result<(usize, usize, Vec<u8>), String>),
     TextSaved(u64, PathBuf, Result<core::FileRevision, String>),
     ArchiveListed(u64, PathBuf, String, Result<Vec<core::ArchiveEntry>, String>),
     ArchiveText(u64, PathBuf, String, Result<String, String>),
@@ -50,6 +51,7 @@ struct DocumentDialog {
     mode: DocumentMode,
     contents: String,
     original_contents: String,
+    image: Option<egui::TextureHandle>,
     revision: Option<core::FileRevision>,
     loading: bool,
     saving: bool,
@@ -780,6 +782,7 @@ impl Browser {
             mode,
             contents: String::new(),
             original_contents: String::new(),
+            image: None,
             revision: None,
             loading: true,
             saving: false,
@@ -787,8 +790,13 @@ impl Browser {
         });
         let tx = self.events_tx.clone();
         thread::spawn(move || {
-            let result = core::read_text(&path, 1_048_576).map_err(|error| error.to_string());
-            let _ = tx.send(Event::TextLoaded(generation, path, result));
+            if mode == DocumentMode::Preview && is_image_path(&path) {
+                let result = decode_preview_image(&path).map_err(|error| error.to_string());
+                let _ = tx.send(Event::ImageLoaded(generation, path, result));
+            } else {
+                let result = core::read_text(&path, 1_048_576).map_err(|error| error.to_string());
+                let _ = tx.send(Event::TextLoaded(generation, path, result));
+            }
         });
     }
 
@@ -1615,7 +1623,7 @@ impl Browser {
         }
     }
 
-    fn handle_events(&mut self) {
+    fn handle_events(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.events_rx.try_recv() {
             match event {
                 Event::Listed(generation, path, result)
@@ -1763,6 +1771,29 @@ impl Browser {
                                 dialog.contents = file.contents;
                                 dialog.original_contents = dialog.contents.clone();
                                 dialog.revision = Some(file.revision);
+                            }
+                            Err(error) => dialog.error = Some(error),
+                        }
+                    }
+                }
+                Event::ImageLoaded(generation, path, result)
+                    if self.document_dialog.as_ref().is_some_and(|dialog| {
+                        dialog.generation == generation && dialog.path == path
+                    }) =>
+                {
+                    if let Some(dialog) = self.document_dialog.as_mut() {
+                        dialog.loading = false;
+                        match result {
+                            Ok((width, height, rgba)) => {
+                                let image = egui::ColorImage::from_rgba_unmultiplied(
+                                    [width, height],
+                                    &rgba,
+                                );
+                                dialog.image = Some(ctx.load_texture(
+                                    format!("preview-{}", dialog.path.display()),
+                                    image,
+                                    egui::TextureOptions::LINEAR,
+                                ));
                             }
                             Err(error) => dialog.error = Some(error),
                         }
@@ -1917,7 +1948,7 @@ impl Browser {
 
 impl eframe::App for Browser {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
-        self.handle_events();
+        self.handle_events(ctx);
         self.refresh_clipboard_state();
         self.on_key(ctx);
         let mut style = (*ctx.style()).clone();
@@ -4736,19 +4767,36 @@ impl Browser {
                             reload_document = Some((dialog.path.clone(), dialog.mode));
                         }
                     }
-                    egui::ScrollArea::both()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            ui.add_sized(
-                                ui.available_size(),
-                                egui::TextEdit::multiline(&mut dialog.contents)
-                                    .font(egui::TextStyle::Monospace)
-                                    .interactive(
-                                        dialog.mode == DocumentMode::Edit && !dialog.saving,
-                                    )
-                                    .desired_width(f32::INFINITY),
+                    if dialog.mode == DocumentMode::Preview
+                        && let Some(texture) = &dialog.image
+                    {
+                        let available = ui.available_size();
+                        let natural = texture.size_vec2();
+                        let scale = (available.x / natural.x)
+                            .min(available.y / natural.y)
+                            .min(1.0)
+                            .max(0.01);
+                        ui.centered_and_justified(|ui| {
+                            ui.add(
+                                egui::Image::new((texture.id(), natural * scale))
+                                    .maintain_aspect_ratio(true),
                             );
                         });
+                    } else {
+                        egui::ScrollArea::both()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.add_sized(
+                                    ui.available_size(),
+                                    egui::TextEdit::multiline(&mut dialog.contents)
+                                        .font(egui::TextStyle::Monospace)
+                                        .interactive(
+                                            dialog.mode == DocumentMode::Edit && !dialog.saving,
+                                        )
+                                        .desired_width(f32::INFINITY),
+                                );
+                            });
+                    }
                 }
                 if dialog.mode == DocumentMode::Edit && dirty {
                     ui.label("Unsaved changes");
@@ -5077,6 +5125,29 @@ fn item_name(path: &Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string())
+}
+
+fn is_image_path(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| {
+        ["bmp", "gif", "jpg", "jpeg", "png", "webp"]
+            .iter()
+            .any(|supported| extension.eq_ignore_ascii_case(supported))
+    })
+}
+
+fn decode_preview_image(path: &Path) -> anyhow::Result<(usize, usize, Vec<u8>)> {
+    if std::fs::metadata(path)?.len() > 67_108_864 {
+        anyhow::bail!("Image file is larger than the 64 MiB preview limit");
+    }
+    let mut reader = image::ImageReader::open(path)?.with_guessed_format()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(8192);
+    limits.max_alloc = Some(268_435_456);
+    reader.limits(limits);
+    let image = reader.decode()?;
+    let (width, height) = (image.width() as usize, image.height() as usize);
+    Ok((width, height, image.into_rgba8().into_raw()))
 }
 
 fn breadcrumbs(path: &Path) -> Vec<(String, PathBuf)> {

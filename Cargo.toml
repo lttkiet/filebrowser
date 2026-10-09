@@ -11,6 +11,7 @@ crossterm = "0.29"
 dirs = "6"
 eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 egui_extras = "0.33"
+image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
 opener = "0.8"
 ratatui = "0.29"
 serde_json = "1"
