@@ -201,6 +201,7 @@ pub fn write_text(path: &Path, revision: FileRevision, contents: &str) -> anyhow
         let _ = fs::remove_dir_all(&transaction);
         return Err(error.into());
     }
+    #[cfg(not(windows))]
     if let Err(error) = output.set_permissions(metadata.permissions()) {
         drop(output);
         let _ = fs::remove_dir_all(&transaction);
@@ -218,17 +219,22 @@ pub fn write_text(path: &Path, revision: FileRevision, contents: &str) -> anyhow
             return Err(error);
         }
     }
-    if let Err(error) = fs::rename(path, &backup) {
-        let _ = fs::remove_dir_all(&transaction);
-        return Err(error.into());
-    }
-    if let Err(error) = fs::rename(&staged, path) {
-        if let Err(restore_error) = fs::rename(&backup, path) {
+    #[cfg(windows)]
+    replace_staged_file(path, &staged, &backup, &transaction)?;
+    #[cfg(not(windows))]
+    {
+        if let Err(error) = fs::rename(path, &backup) {
             let _ = fs::remove_dir_all(&transaction);
-            anyhow::bail!("Could not save file ({error}) or restore the original ({restore_error})");
+            return Err(error.into());
         }
-        let _ = fs::remove_dir_all(&transaction);
-        return Err(error.into());
+        if let Err(error) = fs::rename(&staged, path) {
+            if let Err(restore_error) = fs::rename(&backup, path) {
+                let _ = fs::remove_dir_all(&transaction);
+                anyhow::bail!("Could not save file ({error}) or restore the original ({restore_error})");
+            }
+            let _ = fs::remove_dir_all(&transaction);
+            return Err(error.into());
+        }
     }
     let _ = fs::remove_file(&backup).or_else(|_| {
         let mut permissions = fs::metadata(&backup)?.permissions();
@@ -283,6 +289,52 @@ fn content_fingerprint(contents: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     contents.hash(&mut hasher);
     hasher.finish()
+}
+
+#[cfg(windows)]
+fn replace_staged_file(
+    original: &Path,
+    staged: &Path,
+    backup: &Path,
+    transaction: &Path,
+) -> anyhow::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    let wide_path = |path: &Path| {
+        path.as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>()
+    };
+    let original_wide = wide_path(original);
+    let staged_wide = wide_path(staged);
+    let backup_wide = wide_path(backup);
+    let result = unsafe {
+        windows_sys::Win32::Storage::FileSystem::ReplaceFileW(
+            original_wide.as_ptr(),
+            staged_wide.as_ptr(),
+            backup_wide.as_ptr(),
+            0,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    if result != 0 {
+        return Ok(());
+    }
+
+    let error = std::io::Error::last_os_error();
+    let original_exists = fs::symlink_metadata(original).is_ok();
+    let backup_exists = fs::symlink_metadata(backup).is_ok();
+    if !original_exists && backup_exists {
+        if let Err(restore_error) = fs::rename(backup, original) {
+            anyhow::bail!("Could not replace file ({error}) or restore the original ({restore_error}); recovery copy remains at {}", backup.display());
+        }
+    }
+    if fs::symlink_metadata(backup).is_err() && fs::symlink_metadata(original).is_ok() {
+        let _ = fs::remove_dir_all(transaction);
+    }
+    Err(error.into())
 }
 
 fn set_modified_time(path: &Path, modified: SystemTime) -> std::io::Result<()> {
