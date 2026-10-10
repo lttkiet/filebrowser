@@ -39,6 +39,6 @@ Preview and edit UTF-8 text files up to 1 MiB. The desktop GUI also previews BMP
 | `h` / `s` | Toggle hidden files / cycle sort |
 | `q` | Quit |
 
-In the TUI text editor, press Ctrl+S to save, Esc to close, or `x` to discard edits. Content indexing is limited to 100,000 files and 128 MiB of text per build; each file is limited to 1 MiB. Image preview is GUI-only, ZIP browsing is read-only, and content indexes are not saved between launches.
+In the TUI text editor, press Ctrl+S to save, Esc to close, or `x` to discard edits. Content indexing is limited to 100,000 files, 100,000 directories, and 128 MiB of text per build; each file is limited to 1 MiB. Image preview is GUI-only, ZIP browsing is read-only, and content indexes are not saved between launches.
 
 The Linux milestone targets Ubuntu (`.deb`) and openSUSE (`.rpm`).

@@ -369,6 +369,7 @@ The 17 feature modules below define user stories, end-to-end flows, Gherkin acce
 **Acceptance criteria:**
 
 - Given a regular folder, when indexing starts, then it traverses descendant directories without following directory symlinks and skips hidden entries unless hidden visibility is enabled.
+- Given a tree larger than the per-build directory cap, when indexing completes, then at most 100,000 directories are visited and the summary reports that the directory limit was reached.
 - Given readable UTF-8 files up to 1 MiB each, when indexing completes, then they are available for case-insensitive substring search in the active folder tree.
 - Given files larger than 1 MiB, unreadable files, binary/non-UTF-8 files, or resource caps reached, when indexing completes, then those files are skipped and the summary reports indexed and skipped counts.
 - Given content search is enabled without an index for the current folder, when a query is entered, then the app instructs the user to index that folder first.
@@ -902,7 +903,7 @@ When no explicit selection exists, copy, cut, rename, and delete use the current
 | FR-41 | Edit TUI search and prompts at an insertion point. | Left/Right move by grapheme; Home/End, Backspace/Delete, and Ctrl+A operate on the text at the cursor; the cursor remains visible when long inputs are compacted to the terminal width. |
 | FR-42 | Explain why command-row actions are disabled. | Hovering disabled Cut, Copy, Rename, Delete/Move to Trash, or Paste controls explains the missing selection or clipboard requirement; enabled controls retain their action and shortcut hints. |
 | FR-43 | Preview bounded file contents. | GUI previews UTF-8 text up to 1 MiB and BMP/GIF/JPEG/PNG/WebP images within decoder limits; TUI previews UTF-8 text and reports image preview as unavailable. |
-| FR-44 | Index and search file contents. | Indexes UTF-8 files up to 1 MiB without following descendant directory symlinks; limits each build to 100,000 files and 128 MiB of text; the volatile index is cleared after app-managed saves and file operations. |
+| FR-44 | Index and search file contents. | Indexes UTF-8 files up to 1 MiB without following descendant directory symlinks; limits each build to 100,000 files, 100,000 directories, and 128 MiB of text; the volatile index is cleared after app-managed saves and file operations. |
 | FR-45 | Edit UTF-8 text files. | GUI and TUI edit files up to 1 MiB, protect unsaved changes, and reject saves when the file revision is stale. |
 | FR-46 | Browse ZIP archives without extraction. | GUI and TUI list safe archive entries and preview bounded UTF-8 text members; archive contents remain read-only. |
 | FR-47 | Edit basic file properties. | GUI and TUI update read-only state and modified time for one regular non-symlink file or directory. |

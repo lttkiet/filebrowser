@@ -9,6 +9,7 @@ use crate::{core::{self, Entry, SortBy}, display};
 const MAX_FILE_BYTES: u64 = 1_048_576;
 const MAX_INDEX_BYTES: u64 = 134_217_728;
 const MAX_INDEX_FILES: usize = 100_000;
+const MAX_INDEX_DIRECTORIES: usize = 100_000;
 
 #[derive(Clone)]
 struct IndexedFile {
@@ -22,6 +23,7 @@ pub struct ContentIndex {
     files: Vec<IndexedFile>,
     indexed_bytes: u64,
     skipped_files: usize,
+    skipped_directories: bool,
 }
 
 impl ContentIndex {
@@ -35,9 +37,12 @@ impl ContentIndex {
             files: Vec::new(),
             indexed_bytes: 0,
             skipped_files: 0,
+            skipped_directories: false,
         };
         let mut pending = vec![root.to_path_buf()];
+        let mut visited_directories = 0;
         while let Some(directory) = pending.pop() {
+            visited_directories += 1;
             let Ok(entries) = fs::read_dir(&directory) else {
                 continue;
             };
@@ -52,6 +57,10 @@ impl ContentIndex {
                     continue;
                 }
                 if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                    if visited_directories + pending.len() >= MAX_INDEX_DIRECTORIES {
+                        index.skipped_directories = true;
+                        continue;
+                    }
                     pending.push(path);
                     continue;
                 }
@@ -100,10 +109,15 @@ impl ContentIndex {
 
     pub fn summary(&self) -> String {
         format!(
-            "Indexed {} text files ({}); skipped {}",
+            "Indexed {} text files ({}); skipped {}{}",
             self.files.len(),
             display::format_size(self.indexed_bytes),
-            self.skipped_files
+            self.skipped_files,
+            if self.skipped_directories {
+                "; directory limit reached"
+            } else {
+                ""
+            }
         )
     }
 

@@ -205,6 +205,7 @@ struct Browser {
     content_index: Option<Arc<crate::content_index::ContentIndex>>,
     content_search: bool,
     content_index_generation: u64,
+    content_index_building: Option<u64>,
     document_dialog: Option<DocumentDialog>,
     properties_dialog: Option<PropertiesDialog>,
     archive_dialog: Option<ArchiveDialog>,
@@ -290,6 +291,7 @@ impl Browser {
             content_index: None,
             content_search: false,
             content_index_generation: 0,
+            content_index_building: None,
             document_dialog: None,
             properties_dialog: None,
             archive_dialog: None,
@@ -760,8 +762,13 @@ impl Browser {
     }
 
     fn index_current_folder(&mut self) {
+        if self.content_index_building.is_some() {
+            self.message = "An index build is already in progress".into();
+            return;
+        }
         self.content_index_generation = self.content_index_generation.wrapping_add(1);
         let generation = self.content_index_generation;
+        self.content_index_building = Some(generation);
         let root = self.current.clone();
         let show_hidden = self.show_hidden;
         let tx = self.events_tx.clone();
@@ -1753,18 +1760,23 @@ impl Browser {
                         self.message = format!("Search error: {error}");
                     }
                 },
-                Event::Indexed(generation, path, result)
-                    if generation == self.content_index_generation && path == self.current =>
-                match result {
-                    Ok(index) => {
-                        self.message = index.summary();
-                        self.content_index = Some(Arc::new(index));
-                        if self.content_search && !self.query.trim().is_empty() {
-                            self.search();
+                Event::Indexed(generation, path, result) => {
+                    if self.content_index_building == Some(generation) {
+                        self.content_index_building = None;
+                    }
+                    if generation == self.content_index_generation && path == self.current {
+                        match result {
+                            Ok(index) => {
+                                self.message = index.summary();
+                                self.content_index = Some(Arc::new(index));
+                                if self.content_search && !self.query.trim().is_empty() {
+                                    self.search();
+                                }
+                            }
+                            Err(error) => self.message = format!("Index error: {error}"),
                         }
                     }
-                    Err(error) => self.message = format!("Index error: {error}"),
-                },
+                }
                 Event::TextLoaded(generation, path, result)
                     if self.document_dialog.as_ref().is_some_and(|dialog| {
                         dialog.generation == generation && dialog.path == path

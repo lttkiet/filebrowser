@@ -134,6 +134,7 @@ struct App {
     content_index: Option<crate::content_index::ContentIndex>,
     content_search: bool,
     index_generation: u64,
+    index_building: Option<u64>,
     document: Option<TuiDocument>,
     document_generation: u64,
     archive: Option<TuiArchive>,
@@ -175,6 +176,7 @@ impl App {
             content_index: None,
             content_search: false,
             index_generation: 0,
+            index_building: None,
             document: None,
             document_generation: 0,
             archive: None,
@@ -298,8 +300,13 @@ impl App {
     }
 
     fn index_current_folder(&mut self) {
+        if self.index_building.is_some() {
+            self.message = "An index build is already in progress".into();
+            return;
+        }
         self.index_generation = self.index_generation.wrapping_add(1);
         let generation = self.index_generation;
+        self.index_building = Some(generation);
         let root = self.current.clone();
         let hidden = self.show_hidden;
         let tx = self.tx.clone();
@@ -536,18 +543,23 @@ impl App {
                     }
                     Err(error) => self.message = format!("Search error: {error}"),
                 },
-                Event::Indexed(generation, root, result)
-                    if generation == self.index_generation && root == self.current =>
-                match result {
-                    Ok(index) => {
-                        self.message = index.summary();
-                        self.content_index = Some(index);
-                        if self.content_search && !self.query.trim().is_empty() {
-                            self.search();
+                Event::Indexed(generation, root, result) => {
+                    if self.index_building == Some(generation) {
+                        self.index_building = None;
+                    }
+                    if generation == self.index_generation && root == self.current {
+                        match result {
+                            Ok(index) => {
+                                self.message = index.summary();
+                                self.content_index = Some(index);
+                                if self.content_search && !self.query.trim().is_empty() {
+                                    self.search();
+                                }
+                            }
+                            Err(error) => self.message = format!("Index error: {error}"),
                         }
                     }
-                    Err(error) => self.message = format!("Index error: {error}"),
-                },
+                }
                 Event::PropertiesLoaded(path, result) => {
                     self.active_operations = self.active_operations.saturating_sub(1);
                     match result {
