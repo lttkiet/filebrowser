@@ -373,6 +373,7 @@ impl App {
         archive.loading = true;
         archive.error = None;
         self.cursor = 0;
+        self.update_visible();
         self.message = "Reading archive…".into();
         let tx = self.tx.clone();
         thread::spawn(move || {

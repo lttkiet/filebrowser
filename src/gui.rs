@@ -3510,16 +3510,6 @@ impl Browser {
                     self.open_properties(entry.path.clone());
                     ui.close();
                 }
-                if !entry.is_dir {
-                    if ui.button("Preview Text").clicked() {
-                        self.open_document(entry.path.clone(), DocumentMode::Preview);
-                        ui.close();
-                    }
-                    if ui.button("Edit Text").clicked() {
-                        self.open_document(entry.path.clone(), DocumentMode::Edit);
-                        ui.close();
-                    }
-                }
                 if entry.is_dir {
                     ui.separator();
                     if ui
