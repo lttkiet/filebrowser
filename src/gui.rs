@@ -5179,9 +5179,9 @@ fn decode_preview_image(path: &Path) -> anyhow::Result<(usize, usize, Vec<u8>)> 
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(8192);
     limits.max_image_height = Some(8192);
-    limits.max_alloc = Some(268_435_456);
+    limits.max_alloc = Some(67_108_864);
     reader.limits(limits);
-    let image = reader.decode()?;
+    let image = reader.decode()?.thumbnail(2048, 2048);
     let (width, height) = (image.width() as usize, image.height() as usize);
     Ok((width, height, image.into_rgba8().into_raw()))
 }

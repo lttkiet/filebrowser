@@ -347,7 +347,7 @@ The 17 feature modules below define user stories, end-to-end flows, Gherkin acce
 **Acceptance criteria:**
 
 - Given a readable UTF-8 regular file no larger than 1 MiB, when Preview Text is chosen, then the contents appear in a read-only viewer without launching the system opener.
-- Given a supported raster image no larger than 64 MiB encoded and no larger than 8192 × 8192 pixels, when previewed in the GUI, then it is decoded off the UI thread and scaled within the viewer while preserving aspect ratio.
+- Given a supported raster image no larger than 64 MiB encoded and no larger than 8192 × 8192 pixels, when previewed in the GUI, then decoding is limited to a 64 MiB allocation, the image is reduced to at most 2048 × 2048 off the UI thread, and the viewer preserves its aspect ratio.
 - Given an unsupported, binary, unreadable, or oversized file, when preview is requested, then an explanatory error appears and the file remains unchanged.
 - Given a file selected in the TUI, when `v` is pressed, then UTF-8 text is shown with keyboard scrolling; unsupported image display is reported as unavailable in the terminal.
 
@@ -902,7 +902,7 @@ When no explicit selection exists, copy, cut, rename, and delete use the current
 | FR-40 | Preserve usable file-list width while resizing side panes. | With the Navigation and Details panes open, their responsive maximum widths leave at least 320 logical points for the main pane; each splitter shows a horizontal-resize cursor and a pane-specific tooltip. Each pane remains resizable within its minimum and maximum widths. Automatically constrained widths do not replace the preferred widths, which return when the window has room. |
 | FR-41 | Edit TUI search and prompts at an insertion point. | Left/Right move by grapheme; Home/End, Backspace/Delete, and Ctrl+A operate on the text at the cursor; the cursor remains visible when long inputs are compacted to the terminal width. |
 | FR-42 | Explain why command-row actions are disabled. | Hovering disabled Cut, Copy, Rename, Delete/Move to Trash, or Paste controls explains the missing selection or clipboard requirement; enabled controls retain their action and shortcut hints. |
-| FR-43 | Preview bounded file contents. | GUI previews UTF-8 text up to 1 MiB and BMP/GIF/JPEG/PNG/WebP images within decoder limits; TUI previews UTF-8 text and reports image preview as unavailable. |
+| FR-43 | Preview bounded file contents. | GUI previews UTF-8 text up to 1 MiB and BMP/GIF/JPEG/PNG/WebP images with a 64 MiB decoder allocation limit and 2048 × 2048 output cap; TUI previews UTF-8 text and reports image preview as unavailable. |
 | FR-44 | Index and search file contents. | Indexes UTF-8 files up to 1 MiB without following descendant directory symlinks; limits each build to 100,000 files, 100,000 directories, and 128 MiB of text; the volatile index is cleared after app-managed saves and file operations. |
 | FR-45 | Edit UTF-8 text files. | GUI and TUI edit files up to 1 MiB, protect unsaved changes, and reject saves when the file revision is stale. |
 | FR-46 | Browse ZIP archives without extraction. | GUI and TUI list safe archive entries and preview bounded UTF-8 text members; archive contents remain read-only. |
