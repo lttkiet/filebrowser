@@ -43,6 +43,7 @@ pub struct FileProperties {
 #[derive(Clone, Debug)]
 pub struct ArchiveEntry {
     pub member_path: String,
+    pub lookup_path: String,
     pub name: String,
     pub is_dir: bool,
     pub size: u64,
@@ -94,10 +95,10 @@ pub fn list_archive(path: &Path, directory: &str) -> anyhow::Result<Vec<ArchiveE
         let Some(enclosed) = file.enclosed_name() else {
             continue;
         };
-        let Some(name) = enclosed.to_str() else {
+        let Some(enclosed_name) = enclosed.to_str() else {
             continue;
         };
-        let Some(name) = normalize_archive_path(name) else {
+        let Some(name) = normalize_archive_path(enclosed_name) else {
             continue;
         };
         let Some(relative) = name.strip_prefix(&prefix) else {
@@ -118,8 +119,14 @@ pub fn list_archive(path: &Path, directory: &str) -> anyhow::Result<Vec<ArchiveE
         } else {
             format!("{}{child_name}", prefix)
         };
+        let lookup_path = if is_dir {
+            member_path.clone()
+        } else {
+            file.name()?.into_owned()
+        };
         entries.entry(member_path.clone()).or_insert_with(|| ArchiveEntry {
             member_path,
+            lookup_path,
             name: child_name.to_owned(),
             is_dir,
             size: if is_dir { 0 } else { file.size() },
@@ -129,10 +136,10 @@ pub fn list_archive(path: &Path, directory: &str) -> anyhow::Result<Vec<ArchiveE
 }
 
 pub fn read_archive_text(path: &Path, member: &str, limit: u64) -> anyhow::Result<String> {
-    let member = normalize_archive_path(member)
+    normalize_archive_path(member)
         .ok_or_else(|| anyhow::anyhow!("Archive member path is invalid"))?;
     let mut archive = zip::ZipArchive::new(fs::File::open(path)?)?;
-    let file = archive.by_name(&member)?;
+    let file = archive.by_name(member)?;
     if file.is_dir() {
         anyhow::bail!("Cannot preview an archive folder");
     }

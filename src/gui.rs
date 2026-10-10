@@ -5011,7 +5011,7 @@ impl Browser {
                                                     Some(entry.member_path.clone());
                                             } else {
                                                 preview_archive_member =
-                                                    Some(entry.member_path.clone());
+                                                    Some(entry.lookup_path.clone());
                                             }
                                         }
                                     });

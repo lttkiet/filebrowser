@@ -1553,7 +1553,7 @@ impl App {
                 });
                 if let Some((path, entry)) = selected {
                     if !entry.is_dir {
-                        self.open_archive_text(path, entry.member_path);
+                        self.open_archive_text(path, entry.lookup_path);
                     }
                 }
             }
@@ -1598,7 +1598,7 @@ impl App {
             if entry.is_dir {
                 self.load_archive_directory(entry.member_path);
             } else {
-                self.open_archive_text(path, entry.member_path);
+                self.open_archive_text(path, entry.lookup_path);
             }
         }
     }
